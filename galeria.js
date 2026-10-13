@@ -1,8 +1,9 @@
 // =========================================================
 // LS SHOPPING - Galeria de fotos (galeria.js)
+// Versão Supabase Integrada com Ligação Centralizada
 // =========================================================
 
-const supabaseGaleria = window.supabase ? window.supabase.createClient('https://anlzhexippncsdxnwiel.supabase.co', 'sb_publishable_XUgtq7ktyeAhE8_bFya5ug_UBFoY') : null;
+const supabaseGaleria = window.supabaseLS;
 
 document.addEventListener('DOMContentLoaded', () => {
 
@@ -29,7 +30,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // 2. Mostrar a foto número i
     function mostrar(i) {
-        atual = (i + fotos.length) % fotos.length;       // volta ao início/fim
+        atual = (i + fotos.length) % fotos.length;      // volta ao início/fim
         foto.src = fotos[atual];
         contador.textContent = (atual + 1) + ' / ' + fotos.length;
         miniaturas.querySelectorAll('img').forEach((m, k) => {
@@ -92,7 +93,7 @@ document.addEventListener('DOMContentLoaded', () => {
     galeria.querySelector('.galeria-anterior').addEventListener('click', () => mostrar(atual - 1));
     galeria.querySelector('.galeria-proxima').addEventListener('click', () => mostrar(atual + 1));
     galeria.addEventListener('click', (e) => {
-        if (e.target === galeria) fechar();               // clique no fundo escuro
+        if (e.target === galeria) fechar();              // clique no fundo escuro
     });
 
     document.addEventListener('keydown', (e) => {

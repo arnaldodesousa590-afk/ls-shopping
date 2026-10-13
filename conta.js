@@ -1,5 +1,5 @@
 /// =========================================================
-// LS SHOPPING - Aviso de erros (erros.js)
+// LS SHOPPING - Aviso de erros esse 
 // Mostra num aviso vermelho, no fundo do site, qualquer erro de JavaScript,
 // com o nome do ficheiro e a linha. Tem de ser o PRIMEIRO script.
 // =========================================================

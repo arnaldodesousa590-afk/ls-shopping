@@ -3,7 +3,7 @@
 // Versão Profissional: Cor exata #002780 e integração Supabase
 // =========================================================
 
-const supabaseLoja = window.supabase ? window.supabase.createClient('https://anlzhexippncsdxnwiel.supabase.co', 'sb_publishable_XUgtq7ktyeAhE8_bFya5ug_UBFoY') : null;
+const supabaseLoja = window.supabaseLS;
 
 document.addEventListener('DOMContentLoaded', () => {
 

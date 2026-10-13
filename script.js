@@ -1,11 +1,9 @@
 // =========================================================
-// LS SHOPPING - Contas (contas.js) - Integrado com Supabase Auth
+// LS SHOPPING - Contas (contas.js)
+// Versão Supabase Integrada com Ligação Centralizada
 // =========================================================
 
-const SUPABASE_URL = 'https://anlzhexippncsdxnwiel.supabase.co';
-const SUPABASE_ANON_KEY = 'sb_publishable_XUgtq7ktyeAhE8_bFya5ug_UBFoY';
-
-const supabaseClient = window.supabase ? window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY) : null;
+const supabaseClient = window.supabaseLS;
 
 document.addEventListener('DOMContentLoaded', () => {
 
@@ -284,7 +282,6 @@ document.addEventListener('DOMContentLoaded', () => {
                 erroEntrar.textContent = 'Utilizador não encontrado.';
                 return;
             }
-            // Como o Supabase Auth usa email, se necessário podemos mapear pelo ID ou solicitar o e-mail
         }
 
         const { data, error } = await supabaseClient.auth.signInWithPassword({
@@ -324,20 +321,3 @@ document.addEventListener('DOMContentLoaded', () => {
     // =====================================================
     async function verificarSessaoInicial() {
         if (!supabaseClient) return;
-        const { data: { session } } = await supabaseClient.auth.getSession();
-
-        if (session && session.user) {
-            const emailUser = session.user.email;
-            const nomeUser = session.user.user_metadata?.nome || emailUser.split('@')[0];
-            localStorage.setItem('ls_sessao', emailUser);
-            localStorage.setItem('ls_usuario', emailUser);
-            mostrarLogado(nomeUser);
-        } else {
-            localStorage.removeItem('ls_sessao');
-            localStorage.removeItem('ls_usuario');
-            mostrarDeslogado();
-        }
-    }
-
-    verificarSessaoInicial();
-});
