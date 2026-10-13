@@ -3,6 +3,8 @@
 // Zona à parte onde o vendedor gere os seus anúncios.
 // =========================================================
 
+const supabaseMeus = window.supabase ? window.supabase.createClient('https://anlzhexippncsdxnwiel.supabase.co', 'sb_publishable_XUgtq7ktyeAhE8_bFya5ug_UBFoY') : null;
+
 document.addEventListener('DOMContentLoaded', () => {
 
     // 1. O item "Meus Produtos" do menu
@@ -58,24 +60,38 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // 4. Funções auxiliares
     function usuarioAtual() {
-        return localStorage.getItem('ls_usuario') || '';
+        return localStorage.getItem('ls_usuario') || localStorage.getItem('ls_sessao') || '';
     }
 
-    function lerProdutos() {
-        try { return JSON.parse(localStorage.getItem('ls_produtos')) || []; }
-        catch (e) { return []; }
-    }
+    async function lerProdutosSupabase() {
+        if (!supabaseMeus) return [];
+        const { data: { session } } = await supabaseMeus.auth.getSession();
+        const userId = session ? session.user.id : null;
 
-    // Guarda e pede ao script.js para atualizar a vitrine
-    function guardarProdutos(todos) {
-        try {
-            localStorage.setItem('ls_produtos', JSON.stringify(todos));
-        } catch (e) {
-            alert('Não foi possível guardar as alterações (armazenamento cheio).');
-            return false;
+        let query = supabaseMeus.from('produtos').select('*');
+        if (userId) {
+            query = query.eq('user_id', userId);
+        } else {
+            return [];
         }
-        if (window.recarregarVitrine) window.recarregarVitrine();
-        return true;
+
+        const { data, error } = await query.order('criado_em', { ascending: false });
+        if (error || !data) return [];
+
+        return data.map(p => ({
+            id: p.id,
+            dono: p.user_id,
+            nome: p.titulo || p.nome,
+            categoria: p.categoria,
+            preco: Number(p.preco),
+            unidades: p.unidades || 1,
+            contacto: p.contacto || '',
+            descricao: p.descricao,
+            imagens: p.imagens || [p.imagem_url || p.imagem || 'ls.png'],
+            imagem: p.imagem_url || p.imagem || 'ls.png',
+            vendido: p.vendido || false,
+            expiraEm: p.criado_em ? new Date(p.criado_em).getTime() + (30 * 24 * 60 * 60 * 1000) : Date.now() + (30 * 24 * 60 * 60 * 1000)
+        }));
     }
 
     function diasRestantes(p) {
@@ -84,9 +100,14 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     // 5. Desenhar a lista dos meus produtos
-    function desenhar() {
+    async function desenhar() {
         const email = usuarioAtual();
-        const meus = lerProdutos().filter(p => email && p.dono === email);
+        if (!email) {
+            lista.innerHTML = '<p class="painel-meus-vazio">Inicie sessão para ver os seus produtos.</p>';
+            return;
+        }
+
+        const meus = await lerProdutosSupabase();
         lista.innerHTML = '';
 
         if (meus.length === 0) {
@@ -135,8 +156,8 @@ document.addEventListener('DOMContentLoaded', () => {
             const btnVendido = cartao.querySelector('.acao-vendido');
             btnVendido.textContent = p.vendido ? 'Voltar a publicar' : 'Marcar como vendido';
 
-            cartao.querySelector('.acao-editar').addEventListener('click', () => abrirEdicao(p.id));
-            btnVendido.addEventListener('click', () => alternarVendido(p.id));
+            cartao.querySelector('.acao-editar').addEventListener('click', () => abrirEdicao(p.id, meus));
+            btnVendido.addEventListener('click', () => alternarVendido(p.id, p.vendido));
             cartao.querySelector('.acao-eliminar').addEventListener('click', () => eliminar(p.id));
 
             lista.appendChild(cartao);
@@ -144,22 +165,40 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     // 6. Ações
-    function alternarVendido(id) {
-        const todos = lerProdutos();
-        const p = todos.find(x => x.id === id);
-        if (!p) return;
-        p.vendido = !p.vendido;
-        if (guardarProdutos(todos)) desenhar();
+    async function alternarVendido(id, estadoAtual) {
+        if (!supabaseMeus) return;
+        const { error } = await supabaseMeus
+            .from('produtos')
+            .update({ vendido: !estadoAtual })
+            .eq('id', id);
+
+        if (error) {
+            alert('Não foi possível atualizar o estado.');
+            return;
+        }
+        if (window.recarregarVitrine) window.recarregarVitrine();
+        await desenhar();
     }
 
-    function eliminar(id) {
+    async function eliminar(id) {
         if (!confirm('Eliminar este anúncio? Esta ação não pode ser desfeita.')) return;
-        const restantes = lerProdutos().filter(x => x.id !== id);
-        if (guardarProdutos(restantes)) desenhar();
+        if (!supabaseMeus) return;
+
+        const { error } = await supabaseMeus
+            .from('produtos')
+            .delete()
+            .eq('id', id);
+
+        if (error) {
+            alert('Não foi possível eliminar o anúncio.');
+            return;
+        }
+        if (window.recarregarVitrine) window.recarregarVitrine();
+        await desenhar();
     }
 
-    function abrirEdicao(id) {
-        const p = lerProdutos().find(x => x.id === id);
+    async function abrirEdicao(id, listaProdutos) {
+        const p = listaProdutos.find(x => x.id === id);
         if (!p) return;
         idEmEdicao = id;
         form.nome.value = p.nome;
@@ -176,32 +215,42 @@ document.addEventListener('DOMContentLoaded', () => {
         idEmEdicao = null;
     }
 
-    form.addEventListener('submit', (e) => {
+    form.addEventListener('submit', async (e) => {
         e.preventDefault();
-        const todos = lerProdutos();
-        const p = todos.find(x => x.id === idEmEdicao);
-        if (!p) return;
-        p.nome = form.nome.value.trim();
-        p.categoria = form.categoria.value;
-        p.preco = form.preco.value;
-        p.unidades = form.unidades.value;
-        p.contacto = form.contacto.value.trim();
-        p.descricao = form.descricao.value.trim();
-        if (guardarProdutos(todos)) {
-            fecharEdicao();
-            desenhar();
+        if (!supabaseMeus || !idEmEdicao) return;
+
+        const novosDados = {
+            titulo: form.nome.value.trim(),
+            categoria: form.categoria.value,
+            preco: Number(form.preco.value),
+            unidades: Number(form.unidades.value),
+            contacto: form.contacto.value.trim(),
+            descricao: form.descricao.value.trim()
+        };
+
+        const { error } = await supabaseMeus
+            .from('produtos')
+            .update(novosDados)
+            .eq('id', idEmEdicao);
+
+        if (error) {
+            alert('Não foi possível guardar as alterações.');
+            return;
         }
+
+        fecharEdicao();
+        if (window.recarregarVitrine) window.recarregarVitrine();
+        await desenhar();
     });
 
     // 7. Abrir e fechar o painel
-    function abrirPainel() {
+    async function abrirPainel() {
         if (!usuarioAtual()) {
-            // Sem login: abre a janela de entrar
             const entrar = document.getElementById('btn-abrir-login');
             if (entrar) entrar.click();
             return;
         }
-        desenhar();
+        await desenhar();
         painel.classList.add('aberto');
         document.body.classList.add('sem-scroll');
     }

@@ -2,6 +2,8 @@
 // LS SHOPPING - Galeria de fotos (galeria.js)
 // =========================================================
 
+const supabaseGaleria = window.supabase ? window.supabase.createClient('https://anlzhexippncsdxnwiel.supabase.co', 'sb_publishable_XUgtq7ktyeAhE8_bFya5ug_UBFoY') : null;
+
 document.addEventListener('DOMContentLoaded', () => {
 
     // 1. Criar a janela da galeria (começa escondida)
@@ -36,13 +38,31 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     // 3. Abrir a galeria de um produto
-    function abrir(idProduto) {
-        let lista = [];
-        try { lista = JSON.parse(localStorage.getItem('ls_produtos')) || []; } catch (e) {}
-        const prod = lista.find(p => String(p.id) === String(idProduto));
+    async function abrir(idProduto) {
+        let prod = null;
+
+        // Tenta ir buscar ao Supabase primeiro
+        if (supabaseGaleria) {
+            const { data, error } = await supabaseGaleria
+                .from('produtos')
+                .select('*')
+                .eq('id', idProduto)
+                .single();
+            if (!error && data) {
+                prod = data;
+            }
+        }
+
+        // Fallback para o localStorage se necessário
+        if (!prod) {
+            let lista = [];
+            try { lista = JSON.parse(localStorage.getItem('ls_produtos')) || []; } catch (e) {}
+            prod = lista.find(p => String(p.id) === String(idProduto));
+        }
+
         if (!prod) return;
 
-        fotos = (prod.imagens && prod.imagens.length) ? prod.imagens : [prod.imagem];
+        fotos = (prod.imagens && prod.imagens.length) ? prod.imagens : [prod.imagem_url || prod.imagem];
 
         miniaturas.innerHTML = '';
         fotos.forEach((src, k) => {
@@ -72,7 +92,7 @@ document.addEventListener('DOMContentLoaded', () => {
     galeria.querySelector('.galeria-anterior').addEventListener('click', () => mostrar(atual - 1));
     galeria.querySelector('.galeria-proxima').addEventListener('click', () => mostrar(atual + 1));
     galeria.addEventListener('click', (e) => {
-        if (e.target === galeria) fechar();              // clique no fundo escuro
+        if (e.target === galeria) fechar();               // clique no fundo escuro
     });
 
     document.addEventListener('keydown', (e) => {

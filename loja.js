@@ -1,7 +1,9 @@
 // =========================================================
 // LS SHOPPING - Loja / Vitrine principal (loja.js)
-// Versão Profissional: Cor exata #002780 e integração total com o chat.js
+// Versão Profissional: Cor exata #002780 e integração Supabase
 // =========================================================
+
+const supabaseLoja = window.supabase ? window.supabase.createClient('https://anlzhexippncsdxnwiel.supabase.co', 'sb_publishable_XUgtq7ktyeAhE8_bFya5ug_UBFoY') : null;
 
 document.addEventListener('DOMContentLoaded', () => {
 
@@ -34,22 +36,41 @@ document.addEventListener('DOMContentLoaded', () => {
     // COR PROFISSIONAL DEFINIDA PELO KING (#002780)
     const COR_AZUL_PADRAO = '#002780';
 
-    // 2. LER PRODUTOS DO LOCALSTORAGE
-    function lerProdutos() {
-        try {
-            const lista = JSON.parse(localStorage.getItem('ls_produtos')) || [];
-            const agora = Date.now();
-            return lista.filter(p => !p.vendido && (!p.expiraEm || p.expiraEm > agora));
-        } catch (e) {
-            return [];
-        }
+    // 2. LER PRODUTOS DO SUPABASE
+    async function lerProdutos() {
+        if (!supabaseLoja) return [];
+        const { data, error } = await supabaseLoja
+            .from('produtos')
+            .select('*')
+            .order('criado_em', { ascending: false });
+
+        if (error || !data) return [];
+
+        const agora = Date.now();
+        const listaMapeada = data.map(p => ({
+            id: p.id,
+            dono: p.user_id,
+            nome: p.titulo || p.nome,
+            categoria: p.categoria,
+            preco: Number(p.preco),
+            unidades: p.unidades || 1,
+            contacto: p.contacto || '',
+            descricao: p.descricao,
+            imagens: p.imagens || [p.imagem_url || p.imagem || 'ls.png'],
+            imagem: p.imagem_url || p.imagem || 'ls.png',
+            vendido: p.vendido || false,
+            criadoEm: p.criado_em ? new Date(p.criado_em).getTime() : agora,
+            expiraEm: p.criado_em ? new Date(p.criado_em).getTime() + (30 * 24 * 60 * 60 * 1000) : agora + (30 * 24 * 60 * 60 * 1000)
+        }));
+
+        return listaMapeada.filter(p => !p.vendido && (!p.expiraEm || p.expiraEm > agora));
     }
 
     // 3. RENDERIZAR A VITRINE
-    function renderizarVitrine() {
+    async function renderizarVitrine() {
         if (!gridProdutos) return;
 
-        let produtos = lerProdutos();
+        let produtos = await lerProdutos();
         let temFiltroAtivo = false;
 
         // Filtro por Categoria
@@ -155,7 +176,7 @@ document.addEventListener('DOMContentLoaded', () => {
         renderizarVitrine();
     };
 
-    // 4. MODAL DE CONTACTO COM ESTILO PROFISSIONAL E INTEGRAÇÃO AO CHAT.JS
+    // 4. MODAL DE CONTACTO
     function abrirOpcoesContacto(produto) {
         const modalAntigo = document.getElementById('modal-contacto-rapido');
         if (modalAntigo) modalAntigo.remove();
@@ -225,7 +246,6 @@ document.addEventListener('DOMContentLoaded', () => {
             }
             modalDiv.remove();
             
-            // INTEGRAÇÃO COM O CHAT.JS (Abre o chat com o vendedor e produto corretos)
             if (window.abrirContacto) {
                 window.abrirContacto(produto);
             } else {
@@ -235,7 +255,7 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
-    // 5. PESQUISA POR BOTÃO OU ENTER
+    // 5. PESQUISA
     if (btnPesquisar) {
         btnPesquisar.addEventListener('click', () => {
             if (inputPesquisa) {
@@ -353,7 +373,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     if (formCadastrar) {
-        formCadastrar.addEventListener('submit', (e) => {
+        formCadastrar.addEventListener('submit', async (e) => {
             e.preventDefault();
 
             const usuario = localStorage.getItem('ls_sessao');
@@ -362,7 +382,9 @@ document.addEventListener('DOMContentLoaded', () => {
                 return;
             }
 
-            if (imagensTemp.length === 0) {
+            const fotosFinais = (window.fotosProduto && window.fotosProduto.length > 0) ? window.fotosProduto : imagensTemp;
+
+            if (fotosFinais.length === 0) {
                 alert('Por favor, adicione pelo menos uma foto do produto.');
                 return;
             }
@@ -379,34 +401,39 @@ document.addEventListener('DOMContentLoaded', () => {
                 return;
             }
 
-            const novoProduto = {
-                id: 'prod_' + Date.now() + '_' + Math.random().toString(36).substr(2, 4),
-                dono: usuario,
-                nome: nome,
+            let userId = null;
+            if (supabaseLoja) {
+                const { data: { session } } = await supabaseLoja.auth.getSession();
+                if (session && session.user) userId = session.user.id;
+            }
+
+            const novoRegistoSupabase = {
+                user_id: userId,
+                titulo: nome,
                 categoria: categoria,
                 preco: preco,
                 unidades: unidades,
                 contacto: contacto,
                 descricao: descricao,
-                imagens: imagensTemp,
-                imagem: imagensTemp[0],
-                vendido: false,
-                criadoEm: Date.now(),
-                expiraEm: Date.now() + (30 * 24 * 60 * 60 * 1000)
+                imagem_url: fotosFinais[0],
+                imagens: fotosFinais,
+                vendido: false
             };
 
-            const todos = JSON.parse(localStorage.getItem('ls_produtos')) || [];
-            todos.unshift(novoProduto);
+            if (supabaseLoja) {
+                const { error } = await supabaseLoja
+                    .from('produtos')
+                    .insert([novoRegistoSupabase]);
 
-            try {
-                localStorage.setItem('ls_produtos', JSON.stringify(todos));
-            } catch (err) {
-                alert('Erro ao guardar: armazenamento cheio.');
-                return;
+                if (error) {
+                    alert('Erro ao publicar no Supabase: ' + error.message);
+                    return;
+                }
             }
 
             fecharModalPublicar();
-            renderizarVitrine();
+            if (window.limparFotosProduto) window.limparFotosProduto();
+            await renderizarVitrine();
             alert('Produto publicado com sucesso!');
         });
     }
