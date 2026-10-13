@@ -1,12 +1,10 @@
+
 // =========================================================
-// LS SHOPPING - Contas (contas.js) - Original + Supabase Funcional
+// LS SHOPPING - Contas (contas.js)
+// Janela ENTRAR, janela INSCREVER-SE, olho, força da palavra-passe e sessão.
 // =========================================================
 
-const SUPABASE_URL = 'https://anlzhexippncsdxnwiel.supabase.co';
-const SUPABASE_ANON_KEY = 'sb_publishable_XUgtq7ktyeAhE8_bFya5ug_UBFoY';
-
-// Utiliza a ligação centralizada se existir, senão cria uma de segurança
-const supabaseClient = window.supabaseLS || (window.supabase ? window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY) : null);
+const supabaseClient = window.supabaseLS;
 
 document.addEventListener('DOMContentLoaded', () => {
 
@@ -15,15 +13,22 @@ document.addEventListener('DOMContentLoaded', () => {
         if (elemento) elemento.addEventListener(evento, funcao);
     }
 
+    // Procura um elemento obrigatório; se faltar, diz exatamente qual
+    function exigir(id) {
+        const el = document.getElementById(id);
+        if (!el) throw new Error('contas.js: não encontrei o elemento com id="' + id + '" no index.html');
+        return el;
+    }
+
     // =====================================================
     // 1. ELEMENTOS DO HTML
     // =====================================================
-    const modalEntrar = document.getElementById('modal-auth');
-    const modalCadastro = document.getElementById('modal-cadastro');
-    const formEntrar = document.getElementById('form-entrar');
-    const formCadastro = document.getElementById('form-cadastro');
-    const erroEntrar = document.getElementById('erro-entrar');
-    const erroCadastro = document.getElementById('erro-cadastro');
+    const modalEntrar = exigir('modal-auth');
+    const modalCadastro = exigir('modal-cadastro');
+    const formEntrar = exigir('form-entrar');
+    const formCadastro = exigir('form-cadastro');
+    const erroEntrar = exigir('erro-entrar');
+    const erroCadastro = exigir('erro-cadastro');
 
     // Opcionais (o site funciona mesmo que algum falte)
     const usuarioLogadoDiv = document.getElementById('usuario-logado');
@@ -113,12 +118,12 @@ document.addEventListener('DOMContentLoaded', () => {
     // =====================================================
     // 4. ABRIR E FECHAR AS DUAS JANELAS
     // =====================================================
-    function abrir(modal) { if (modal) modal.style.display = 'flex'; }
-    function fechar(modal) { if (modal) modal.style.display = 'none'; }
+    function abrir(modal) { modal.style.display = 'flex'; }
+    function fechar(modal) { modal.style.display = 'none'; }
 
     function abrirEntrar() {
         fechar(modalCadastro);
-        if (erroEntrar) erroEntrar.textContent = '';
+        erroEntrar.textContent = '';
         esconderSenhas();
         abrir(modalEntrar);
         setTimeout(() => {
@@ -129,7 +134,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     function abrirCadastro() {
         fechar(modalEntrar);
-        if (erroCadastro) erroCadastro.textContent = '';
+        erroCadastro.textContent = '';
         esconderSenhas();
         abrir(modalCadastro);
         setTimeout(() => {
@@ -165,6 +170,34 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     });
 
+    // =====================================================
+    // 5. CONTAS GUARDADAS NO NAVEGADOR
+    // =====================================================
+    function lerContas() {
+        try { return JSON.parse(localStorage.getItem('ls_contas')) || []; }
+        catch (e) { return []; }
+    }
+
+    function guardarContas(contas) {
+        localStorage.setItem('ls_contas', JSON.stringify(contas));
+    }
+
+    // Transforma a palavra-passe num "resumo" (hash), para não a guardar às claras.
+    async function gerarHash(senha, sal) {
+        const texto = sal + ':' + senha;
+        if (window.crypto && crypto.subtle) {
+            const bytes = new TextEncoder().encode(texto);
+            const resumo = await crypto.subtle.digest('SHA-256', bytes);
+            return 'sha256:' + Array.from(new Uint8Array(resumo))
+                .map(b => b.toString(16).padStart(2, '0')).join('');
+        }
+        let h = 5381;
+        for (let i = 0; i < texto.length; i++) {
+            h = ((h << 5) + h + texto.charCodeAt(i)) | 0;
+        }
+        return 'simples:' + (h >>> 0).toString(16);
+    }
+
     function emailValido(email) {
         return /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email);
     }
@@ -192,178 +225,111 @@ document.addEventListener('DOMContentLoaded', () => {
         window.dispatchEvent(new Event('ls:sessao'));
     }
 
-    function iniciarSessao(email, usuario) {
-        localStorage.setItem('ls_sessao', email);
-        localStorage.setItem('ls_usuario', email);   // usado pelo script.js e meus-produtos.js
-        mostrarLogado(usuario);
+    function iniciarSessao(conta) {
+        localStorage.setItem('ls_sessao', conta.email);
+        localStorage.setItem('ls_usuario', conta.email);   // usado pelo script.js e meus-produtos.js
+        mostrarLogado(conta.usuario);
         fechar(modalEntrar);
         fechar(modalCadastro);
         avisarSessao();
     }
 
     // =====================================================
-    // 7. INSCREVER-SE (criar conta no Supabase)
+    // 7. INSCREVER-SE (criar conta)
     // =====================================================
-    if (formCadastro) {
-        formCadastro.addEventListener('submit', async (e) => {
-            e.preventDefault();
-            if (erroCadastro) erroCadastro.textContent = '';
-            
-            if (!supabaseClient) {
-                alert('Erro: Supabase não inicializado. Verifique a ligação à internet.');
-                return;
-            }
+    formCadastro.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        erroCadastro.textContent = '';
 
-            const email = document.getElementById('cad-email').value.trim().toLowerCase();
-            const usuario = document.getElementById('cad-usuario').value.trim();
-            const senha = document.getElementById('cad-senha').value;
+        const email = document.getElementById('cad-email').value.trim().toLowerCase();
+        const usuario = document.getElementById('cad-usuario').value.trim();
+        const senha = document.getElementById('cad-senha').value;
 
-            if (!emailValido(email)) {
-                if (erroCadastro) erroCadastro.textContent = 'Escreva um e-mail válido.';
-                return;
-            }
-            if (!usuarioValido(usuario)) {
-                if (erroCadastro) erroCadastro.textContent = 'O nome de utilizador deve ter 3 a 20 caracteres (letras, números, _ ou .).';
-                return;
-            }
-            if (senha.length < 6) {
-                if (erroCadastro) erroCadastro.textContent = 'A palavra-passe deve ter pelo menos 6 caracteres.';
-                return;
-            }
+        if (!emailValido(email)) {
+            erroCadastro.textContent = 'Escreva um e-mail válido.';
+            return;
+        }
+        if (!usuarioValido(usuario)) {
+            erroCadastro.textContent = 'O nome de utilizador deve ter 3 a 20 caracteres (letras, números, _ ou .).';
+            return;
+        }
+        if (senha.length < 6) {
+            erroCadastro.textContent = 'A palavra-passe deve ter pelo menos 6 caracteres.';
+            return;
+        }
 
-            try {
-                const { data, error } = await supabaseClient.auth.signUp({
-                    email: email,
-                    password: senha,
-                    options: {
-                        data: { nome: usuario }
-                    }
-                });
+        const contas = lerContas();
+        if (contas.some(c => c.email === email)) {
+            erroCadastro.textContent = 'Este e-mail já tem uma conta. Clique em "Entrar".';
+            return;
+        }
+        if (contas.some(c => c.usuario.toLowerCase() === usuario.toLowerCase())) {
+            erroCadastro.textContent = 'Este nome de utilizador já está em uso. Escolha outro.';
+            return;
+        }
 
-                if (error) {
-                    if (erroCadastro) erroCadastro.textContent = error.message;
-                    alert('Erro ao registar: ' + error.message);
-                    return;
-                }
+        const sal = Math.random().toString(36).slice(2) + Date.now().toString(36);
+        const senhaHash = await gerarHash(senha, sal);
+        const novaConta = { email, usuario, sal, senhaHash, criadoEm: Date.now() };
 
-                // Guarda também na tabela profiles se existir
-                if (data.user) {
-                    await supabaseClient.from('profiles').upsert({
-                        id: data.user.id,
-                        nome: usuario,
-                        email: email
-                    });
-                }
+        contas.push(novaConta);
+        guardarContas(contas);
 
-                formCadastro.reset();
-                atualizarForca();
-                iniciarSessao(email, usuario);
-                alert('Conta criada com sucesso na nuvem!');
-                window.location.reload();
-            } catch (err) {
-                alert('Erro inesperado: ' + err.message);
-            }
-        });
-    }
+        formCadastro.reset();
+        atualizarForca();
+        iniciarSessao(novaConta);
+    });
 
     // =====================================================
-    // 8. ENTRAR (Autenticação no Supabase)
+    // 8. ENTRAR
     // =====================================================
-    if (formEntrar) {
-        formEntrar.addEventListener('submit', async (e) => {
-            e.preventDefault();
-            if (erroEntrar) erroEntrar.textContent = '';
-            
-            if (!supabaseClient) {
-                alert('Erro: Supabase não inicializado. Verifique a ligação à internet.');
-                return;
-            }
+    formEntrar.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        erroEntrar.textContent = '';
 
-            const identificador = document.getElementById('entrar-identificador').value.trim().toLowerCase();
-            const senha = document.getElementById('entrar-senha').value;
+        const id = document.getElementById('entrar-identificador').value.trim().toLowerCase();
+        const senha = document.getElementById('entrar-senha').value;
+        const contas = lerContas();
 
-            let emailParaLogin = identificador;
+        if (contas.length === 0) {
+            erroEntrar.textContent = 'Ainda não existe nenhuma conta. Clique em "Criar conta".';
+            return;
+        }
 
-            try {
-                // Se introduziu um nome de utilizador em vez de e-mail, tenta procurar o e-mail na tabela profiles
-                if (!emailValido(identificador)) {
-                    const { data: profile } = await supabaseClient
-                        .from('profiles')
-                        .select('email')
-                        .eq('nome', identificador)
-                        .single();
-                    
-                    if (!profile) {
-                        if (erroEntrar) erroEntrar.textContent = 'Utilizador não encontrado.';
-                        alert('Utilizador não encontrado.');
-                        return;
-                    }
-                    emailParaLogin = profile.email;
-                }
+        const conta = contas.find(c => c.email === id || c.usuario.toLowerCase() === id);
+        const hash = conta ? await gerarHash(senha, conta.sal) : '';
 
-                const { data, error } = await supabaseClient.auth.signInWithPassword({
-                    email: emailParaLogin,
-                    password: senha
-                });
+        if (!conta || hash !== conta.senhaHash) {
+            erroEntrar.textContent = 'E-mail/utilizador ou palavra-passe incorretos.';
+            return;
+        }
 
-                if (error) {
-                    if (erroEntrar) erroEntrar.textContent = 'E-mail ou palavra-passe incorretos.';
-                    alert('Erro ao entrar: ' + error.message);
-                    return;
-                }
-
-                if (data.session) {
-                    const emailUser = data.session.user.email;
-                    const nomeUser = data.session.user.user_metadata?.nome || emailUser.split('@')[0];
-                    
-                    formEntrar.reset();
-                    iniciarSessao(emailUser, nomeUser);
-                    alert('Sessão iniciada com sucesso!');
-                    window.location.reload();
-                }
-            } catch (err) {
-                alert('Erro inesperado no login: ' + err.message);
-            }
-        });
-    }
+        formEntrar.reset();
+        iniciarSessao(conta);
+    });
 
     // =====================================================
     // 9. SAIR (terminar sessão corretamente)
     // =====================================================
-    ligar(btnSair, 'click', async () => {
-        if (supabaseClient) {
-            await supabaseClient.auth.signOut();
-        }
+    ligar(btnSair, 'click', () => {
         localStorage.removeItem('ls_sessao');
         localStorage.removeItem('ls_usuario');
         mostrarDeslogado();
         avisarSessao();
-        window.location.reload();
     });
 
     // =====================================================
-    // 10. AO ABRIR O SITE: verificar sessão ativa no Supabase
+    // 10. AO ABRIR O SITE: voltar a entrar na conta guardada
     // =====================================================
-    async function verificarSessaoInicial() {
-        if (!supabaseClient) return;
-        try {
-            const { data: { session } } = await supabaseClient.auth.getSession();
+    const emailSessao = localStorage.getItem('ls_sessao');
+    const contaSessao = emailSessao ? lerContas().find(c => c.email === emailSessao) : null;
 
-            if (session && session.user) {
-                const emailUser = session.user.email;
-                const nomeUser = session.user.user_metadata?.nome || emailUser.split('@')[0];
-                localStorage.setItem('ls_sessao', emailUser);
-                localStorage.setItem('ls_usuario', emailUser);
-                mostrarLogado(nomeUser);
-            } else {
-                localStorage.removeItem('ls_sessao');
-                localStorage.removeItem('ls_usuario');
-                mostrarDeslogado();
-            }
-        } catch (err) {
-            console.error('Erro ao verificar sessão:', err);
-        }
+    if (contaSessao) {
+        localStorage.setItem('ls_usuario', contaSessao.email);
+        mostrarLogado(contaSessao.usuario);
+    } else {
+        localStorage.removeItem('ls_sessao');
+        localStorage.removeItem('ls_usuario');
+        mostrarDeslogado();
     }
-
-    verificarSessaoInicial();
 });
