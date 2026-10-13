@@ -1,9 +1,12 @@
 // =========================================================
-// LS SHOPPING - Contas (contas.js)
-// Versão Definitiva Unificada e Blindada
+// LS SHOPPING - Contas (contas.js) - Original + Supabase Funcional
 // =========================================================
 
-const supabaseClient = window.supabaseLS;
+const SUPABASE_URL = 'https://anlzhexippncsdxnwiel.supabase.co';
+const SUPABASE_ANON_KEY = 'sb_publishable_XUgtq7ktyeAhE8_bFya5ug_UBFoY';
+
+// Utiliza a ligação centralizada se existir, senão cria uma de segurança
+const supabaseClient = window.supabaseLS || (window.supabase ? window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY) : null);
 
 document.addEventListener('DOMContentLoaded', () => {
 
@@ -13,7 +16,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     // =====================================================
-    // 1. ELEMENTOS DO HTML (Com fallbacks para evitar erros)
+    // 1. ELEMENTOS DO HTML
     // =====================================================
     const modalEntrar = document.getElementById('modal-auth');
     const modalCadastro = document.getElementById('modal-cadastro');
@@ -22,6 +25,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const erroEntrar = document.getElementById('erro-entrar');
     const erroCadastro = document.getElementById('erro-cadastro');
 
+    // Opcionais (o site funciona mesmo que algum falte)
     const usuarioLogadoDiv = document.getElementById('usuario-logado');
     const nomeUsuarioEl = document.getElementById('nome-usuario');
     const linksAuth = document.querySelectorAll('.inscerever-entrar > a');
@@ -42,6 +46,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const ICONE_VER = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>';
     const ICONE_ESCONDER = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>';
 
+    // Volta a esconder todas as palavras-passe (e põe o ícone do olho aberto)
     function esconderSenhas() {
         document.querySelectorAll('.campo-senha').forEach((campo) => {
             const input = campo.querySelector('input');
@@ -60,7 +65,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if (!input || !botao) return;
 
         botao.addEventListener('click', (e) => {
-            e.preventDefault();
+            e.preventDefault(); // Impede que o botão submeta o formulário
             const mostrar = (input.type === 'password');
             input.type = mostrar ? 'text' : 'password';
             botao.innerHTML = mostrar ? ICONE_ESCONDER : ICONE_VER;
@@ -71,7 +76,7 @@ document.addEventListener('DOMContentLoaded', () => {
     esconderSenhas();
 
     // =====================================================
-    // 3. BARRA DE FORÇA DA PALAVRA-PASSE
+    // 3. BARRA DE FORÇA DA PALAVRA-PASSE (janela Inscrever-se)
     // =====================================================
     function atualizarForca() {
         if (!barraForca || !textoForca || !campoSenhaCadastro) return;
@@ -106,7 +111,7 @@ document.addEventListener('DOMContentLoaded', () => {
     ligar(campoSenhaCadastro, 'input', atualizarForca);
 
     // =====================================================
-    // 4. ABRIR E FECHAR AS DUAS JANELAS (Com segurança contra nulos)
+    // 4. ABRIR E FECHAR AS DUAS JANELAS
     // =====================================================
     function abrir(modal) { if (modal) modal.style.display = 'flex'; }
     function fechar(modal) { if (modal) modal.style.display = 'none'; }
@@ -133,17 +138,25 @@ document.addEventListener('DOMContentLoaded', () => {
         }, 50);
     }
 
-    // Associações de eventos de abertura e fecho
+    // "Entrar" e "Inscrever-se" do topo do site
     ligar(btnAbrirLogin, 'click', (e) => { e.preventDefault(); abrirEntrar(); });
     ligar(btnAbrirCadastro, 'click', (e) => { e.preventDefault(); abrirCadastro(); });
+
+    // Botões/links para trocar de janela
     ligar(irInscrever, 'click', (e) => { e.preventDefault(); abrirCadastro(); });
     ligar(irEntrar, 'click', (e) => { e.preventDefault(); abrirEntrar(); });
 
+    // Fechar a janela de entrar (botão X e clique fora)
     ligar(btnFecharAuth, 'click', () => fechar(modalEntrar));
-    ligar(modalEntrar, 'click', (e) => { if (e.target === modalEntrar) fechar(modalEntrar); });
+    ligar(modalEntrar, 'click', (e) => {
+        if (e.target === modalEntrar) fechar(modalEntrar);
+    });
 
+    // Fechar a janela de inscrever-se (botão X e clique fora)
     ligar(btnFecharCadastro, 'click', () => fechar(modalCadastro));
-    ligar(modalCadastro, 'click', (e) => { if (e.target === modalCadastro) fechar(modalCadastro); });
+    ligar(modalCadastro, 'click', (e) => {
+        if (e.target === modalCadastro) fechar(modalCadastro);
+    });
 
     document.addEventListener('keydown', (e) => {
         if (e.key === 'Escape') {
@@ -174,13 +187,14 @@ document.addEventListener('DOMContentLoaded', () => {
         linksAuth.forEach(l => l.style.display = 'inline-block');
     }
 
+    // Avisa os outros ficheiros (ex.: chat.js) de que a sessão mudou
     function avisarSessao() {
         window.dispatchEvent(new Event('ls:sessao'));
     }
 
     function iniciarSessao(email, usuario) {
         localStorage.setItem('ls_sessao', email);
-        localStorage.setItem('ls_usuario', email);
+        localStorage.setItem('ls_usuario', email);   // usado pelo script.js e meus-produtos.js
         mostrarLogado(usuario);
         fechar(modalEntrar);
         fechar(modalCadastro);
@@ -194,7 +208,11 @@ document.addEventListener('DOMContentLoaded', () => {
         formCadastro.addEventListener('submit', async (e) => {
             e.preventDefault();
             if (erroCadastro) erroCadastro.textContent = '';
-            if (!supabaseClient) return;
+            
+            if (!supabaseClient) {
+                alert('Erro: Supabase não inicializado. Verifique a ligação à internet.');
+                return;
+            }
 
             const email = document.getElementById('cad-email').value.trim().toLowerCase();
             const usuario = document.getElementById('cad-usuario').value.trim();
@@ -205,7 +223,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 return;
             }
             if (!usuarioValido(usuario)) {
-                if (erroCadastro) erroCadastro.textContent = 'O nome de utilizador deve ter 3 a 20 caracteres.';
+                if (erroCadastro) erroCadastro.textContent = 'O nome de utilizador deve ter 3 a 20 caracteres (letras, números, _ ou .).';
                 return;
             }
             if (senha.length < 6) {
@@ -213,28 +231,38 @@ document.addEventListener('DOMContentLoaded', () => {
                 return;
             }
 
-            const { data, error } = await supabaseClient.auth.signUp({
-                email: email,
-                password: senha,
-                options: { data: { nome: usuario } }
-            });
-
-            if (error) {
-                if (erroCadastro) erroCadastro.textContent = error.message;
-                return;
-            }
-
-            if (data.user) {
-                await supabaseClient.from('profiles').upsert({
-                    id: data.user.id,
-                    nome: usuario
+            try {
+                const { data, error } = await supabaseClient.auth.signUp({
+                    email: email,
+                    password: senha,
+                    options: {
+                        data: { nome: usuario }
+                    }
                 });
-            }
 
-            formCadastro.reset();
-            atualizarForca();
-            iniciarSessao(email, usuario);
-            alert('Conta criada com sucesso na nuvem!');
+                if (error) {
+                    if (erroCadastro) erroCadastro.textContent = error.message;
+                    alert('Erro ao registar: ' + error.message);
+                    return;
+                }
+
+                // Guarda também na tabela profiles se existir
+                if (data.user) {
+                    await supabaseClient.from('profiles').upsert({
+                        id: data.user.id,
+                        nome: usuario,
+                        email: email
+                    });
+                }
+
+                formCadastro.reset();
+                atualizarForca();
+                iniciarSessao(email, usuario);
+                alert('Conta criada com sucesso na nuvem!');
+                window.location.reload();
+            } catch (err) {
+                alert('Erro inesperado: ' + err.message);
+            }
         });
     }
 
@@ -245,42 +273,56 @@ document.addEventListener('DOMContentLoaded', () => {
         formEntrar.addEventListener('submit', async (e) => {
             e.preventDefault();
             if (erroEntrar) erroEntrar.textContent = '';
-            if (!supabaseClient) return;
+            
+            if (!supabaseClient) {
+                alert('Erro: Supabase não inicializado. Verifique a ligação à internet.');
+                return;
+            }
 
             const identificador = document.getElementById('entrar-identificador').value.trim().toLowerCase();
             const senha = document.getElementById('entrar-senha').value;
 
             let emailParaLogin = identificador;
 
-            if (!emailValido(identificador)) {
-                const { data: profile } = await supabaseClient
-                    .from('profiles')
-                    .select('id')
-                    .eq('nome', identificador)
-                    .single();
-                
-                if (!profile) {
-                    if (erroEntrar) erroEntrar.textContent = 'Utilizador não encontrado.';
+            try {
+                // Se introduziu um nome de utilizador em vez de e-mail, tenta procurar o e-mail na tabela profiles
+                if (!emailValido(identificador)) {
+                    const { data: profile } = await supabaseClient
+                        .from('profiles')
+                        .select('email')
+                        .eq('nome', identificador)
+                        .single();
+                    
+                    if (!profile) {
+                        if (erroEntrar) erroEntrar.textContent = 'Utilizador não encontrado.';
+                        alert('Utilizador não encontrado.');
+                        return;
+                    }
+                    emailParaLogin = profile.email;
+                }
+
+                const { data, error } = await supabaseClient.auth.signInWithPassword({
+                    email: emailParaLogin,
+                    password: senha
+                });
+
+                if (error) {
+                    if (erroEntrar) erroEntrar.textContent = 'E-mail ou palavra-passe incorretos.';
+                    alert('Erro ao entrar: ' + error.message);
                     return;
                 }
-            }
 
-            const { data, error } = await supabaseClient.auth.signInWithPassword({
-                email: emailParaLogin,
-                password: senha
-            });
-
-            if (error) {
-                if (erroEntrar) erroEntrar.textContent = 'E-mail ou palavra-passe incorretos.';
-                return;
-            }
-
-            if (data.session) {
-                const emailUser = data.session.user.email;
-                const nomeUser = data.session.user.user_metadata?.nome || emailUser.split('@')[0];
-                
-                formEntrar.reset();
-                iniciarSessao(emailUser, nomeUser);
+                if (data.session) {
+                    const emailUser = data.session.user.email;
+                    const nomeUser = data.session.user.user_metadata?.nome || emailUser.split('@')[0];
+                    
+                    formEntrar.reset();
+                    iniciarSessao(emailUser, nomeUser);
+                    alert('Sessão iniciada com sucesso!');
+                    window.location.reload();
+                }
+            } catch (err) {
+                alert('Erro inesperado no login: ' + err.message);
             }
         });
     }
@@ -296,25 +338,30 @@ document.addEventListener('DOMContentLoaded', () => {
         localStorage.removeItem('ls_usuario');
         mostrarDeslogado();
         avisarSessao();
+        window.location.reload();
     });
 
     // =====================================================
-    // 10. AO ABRIR O SITE: verificar sessão ativa
+    // 10. AO ABRIR O SITE: verificar sessão ativa no Supabase
     // =====================================================
     async function verificarSessaoInicial() {
         if (!supabaseClient) return;
-        const { data: { session } } = await supabaseClient.auth.getSession();
+        try {
+            const { data: { session } } = await supabaseClient.auth.getSession();
 
-        if (session && session.user) {
-            const emailUser = session.user.email;
-            const nomeUser = session.user.user_metadata?.nome || emailUser.split('@')[0];
-            localStorage.setItem('ls_sessao', emailUser);
-            localStorage.setItem('ls_usuario', emailUser);
-            mostrarLogado(nomeUser);
-        } else {
-            localStorage.removeItem('ls_sessao');
-            localStorage.removeItem('ls_usuario');
-            mostrarDeslogado();
+            if (session && session.user) {
+                const emailUser = session.user.email;
+                const nomeUser = session.user.user_metadata?.nome || emailUser.split('@')[0];
+                localStorage.setItem('ls_sessao', emailUser);
+                localStorage.setItem('ls_usuario', emailUser);
+                mostrarLogado(nomeUser);
+            } else {
+                localStorage.removeItem('ls_sessao');
+                localStorage.removeItem('ls_usuario');
+                mostrarDeslogado();
+            }
+        } catch (err) {
+            console.error('Erro ao verificar sessão:', err);
         }
     }
 
