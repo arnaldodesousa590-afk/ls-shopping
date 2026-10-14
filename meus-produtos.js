@@ -20,7 +20,7 @@ document.addEventListener('DOMContentLoaded', () => {
             <h2>Meus Produtos</h2>
         </div>
         <div class="painel-meus-corpo">
-            <p class="painel-meus-aviso">Os anúncios ficam 30 dias no site. Quando vender, marque como vendido e ele deixa de aparecer.</p>
+            <p class="painel-meus-aviso">Os anúncios ficam 30 dias no site. Quando vender, marque como vendido e o anúncio é eliminado.</p>
             <div class="painel-meus-lista"></div>
         </div>
     `;
@@ -157,7 +157,7 @@ document.addEventListener('DOMContentLoaded', () => {
             btnVendido.textContent = p.vendido ? 'Voltar a publicar' : 'Marcar como vendido';
 
             cartao.querySelector('.acao-editar').addEventListener('click', () => abrirEdicao(p.id, meus));
-            btnVendido.addEventListener('click', () => alternarVendido(p.id, p.vendido));
+            btnVendido.addEventListener('click', () => p.vendido ? alternarVendido(p.id, p.vendido) : marcarVendido(p.id));
             cartao.querySelector('.acao-eliminar').addEventListener('click', () => eliminar(p.id));
 
             lista.appendChild(cartao);
@@ -174,6 +174,24 @@ document.addEventListener('DOMContentLoaded', () => {
 
         if (error) {
             alert('Não foi possível atualizar o estado.');
+            return;
+        }
+        if (window.recarregarVitrine) window.recarregarVitrine();
+        await desenhar();
+    }
+
+    // Marcar como vendido = o anúncio é eliminado
+    async function marcarVendido(id) {
+        if (!confirm('Marcar como vendido vai ELIMINAR este anúncio do site. Continuar?')) return;
+        if (!supabaseMeus) return;
+
+        const { error } = await supabaseMeus
+            .from('produtos')
+            .delete()
+            .eq('id', id);
+
+        if (error) {
+            alert('Não foi possível eliminar o anúncio: ' + error.message);
             return;
         }
         if (window.recarregarVitrine) window.recarregarVitrine();

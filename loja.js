@@ -54,7 +54,7 @@ document.addEventListener('DOMContentLoaded', () => {
             nome: p.titulo || p.nome,
             categoria: p.categoria,
             preco: Number(p.preco),
-            unidades: p.unidades || 1,
+            unidades: Number(p.unidades ?? 1),
             contacto: p.contacto || '',
             descricao: p.descricao,
             imagens: p.imagens || [p.imagem_url || p.imagem || 'ls.png'],
@@ -122,6 +122,10 @@ document.addEventListener('DOMContentLoaded', () => {
             
             const descTexto = p.descricao || 'Sem descrição informada.';
             const precisaVerMais = descTexto.length > 45;
+            const unidadesTexto = p.unidades > 0
+                ? (p.unidades === 1 ? '1 unidade disponível' : p.unidades + ' unidades disponíveis')
+                : 'Esgotado';
+            const unidadesCor = p.unidades > 0 ? '#64748b' : '#c62828';
 
             cartao.innerHTML = `
                 <div style="position: relative; width: 100%; height: 195px; background: #f8fafc; overflow: hidden;">
@@ -130,7 +134,8 @@ document.addEventListener('DOMContentLoaded', () => {
                 </div>
                 <div style="padding: 16px; display: flex; flex-direction: column; flex-grow: 1;">
                     <h3 style="font-size: 16px; font-weight: 600; color: #0f172a; margin: 0 0 6px 0; line-height: 1.3;">${p.nome}</h3>
-                    <strong style="font-size: 18px; color: #000000; margin-bottom: 10px; display: block; font-weight: 700;">${Number(p.preco).toLocaleString('pt-AO')} Kz</strong>
+                    <strong style="font-size: 18px; color: #000000; margin-bottom: 4px; display: block; font-weight: 700;">${Number(p.preco).toLocaleString('pt-AO')} Kz</strong>
+                    <span style="font-size: 12px; color: ${unidadesCor}; margin-bottom: 10px; display: block; font-weight: 600;">${unidadesTexto}</span>
                     
                     <div style="margin-bottom: 12px; flex-grow: 1;">
                         <p class="desc-curta" style="font-size: 13px; color: #475569; margin: 0; line-height: 1.4; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">${descTexto}</p>

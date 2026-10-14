@@ -64,6 +64,7 @@ document.addEventListener('DOMContentLoaded', () => {
             .or(filtro)
             .order('atualizada_em', { ascending: false });
 
+        if (error) console.error('chat.js: erro a ler as conversas:', error.message);
         if (error || !data) return [];
 
         cacheConversas = data.map(c => ({
@@ -169,7 +170,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     .from('mensagens')
                     .upsert([novaConv], { onConflict: 'id', ignoreDuplicates: true });
                 if (error) {
-                    alert('Não foi possível iniciar a conversa.');
+                    alert('Não foi possível iniciar a conversa: ' + error.message);
                     return null;
                 }
             }
@@ -253,7 +254,7 @@ document.addEventListener('DOMContentLoaded', () => {
             return;
         }
         if (donoProd === meuId || donoProd === eu) {
-            alert('Este anúncio é seu.');
+            alert('Este anúncio é seu. Para testar o chat, entre com outra conta.');
             return;
         }
 
@@ -453,7 +454,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 .eq('id', c.id);
 
             if (error) {
-                alert('Não foi possível enviar a mensagem.');
+                alert('Não foi possível enviar a mensagem: ' + error.message);
                 return;
             }
         }

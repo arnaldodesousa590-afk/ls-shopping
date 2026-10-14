@@ -242,7 +242,18 @@ document.addEventListener('DOMContentLoaded', () => {
             return;
         }
 
-        // Guarda também na tabela profiles se existir
+        // Sem sessão = o Supabase está a pedir a confirmação do e-mail.
+        // Nesse caso ainda não se entra no site: primeiro confirma, depois "Entrar".
+        if (!data.session) {
+            formCadastro.reset();
+            atualizarForca();
+            fechar(modalCadastro);
+            alert('Conta criada! Enviámos um e-mail de confirmação para ' + email + '. Confirme-o e depois clique em "Entrar".');
+            abrirEntrar();
+            return;
+        }
+
+        // Guarda também na tabela profiles
         if (data.user) {
             await supabaseClient.from('profiles').upsert({
                 id: data.user.id,
@@ -290,7 +301,9 @@ document.addEventListener('DOMContentLoaded', () => {
         });
 
         if (error) {
-            erroEntrar.textContent = 'E-mail ou palavra-passe incorretos.';
+            erroEntrar.textContent = /not confirmed/i.test(error.message)
+                ? 'Confirme primeiro o seu e-mail (veja a sua caixa de entrada).'
+                : 'E-mail ou palavra-passe incorretos.';
             return;
         }
 
