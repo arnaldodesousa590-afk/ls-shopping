@@ -1,9 +1,7 @@
 // =========================================================
 // LS SHOPPING - Galeria de fotos (galeria.js)
-// Versão Supabase Integrada com Ligação Centralizada
+// As fotos vêm do Supabase (tabela produtos).
 // =========================================================
-
-const supabaseGaleria = window.supabaseLS;
 
 document.addEventListener('DOMContentLoaded', () => {
 
@@ -30,7 +28,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // 2. Mostrar a foto número i
     function mostrar(i) {
-        atual = (i + fotos.length) % fotos.length;      // volta ao início/fim
+        atual = (i + fotos.length) % fotos.length;       // volta ao início/fim
         foto.src = fotos[atual];
         contador.textContent = (atual + 1) + ' / ' + fotos.length;
         miniaturas.querySelectorAll('img').forEach((m, k) => {
@@ -38,32 +36,25 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
-    // 3. Abrir a galeria de um produto
+    // 3. Abrir a galeria de um produto (busca as fotos ao Supabase)
     async function abrir(idProduto) {
-        let prod = null;
+        const cliente = window.supabaseLS;
+        if (!cliente) return;
 
-        // Tenta ir buscar ao Supabase primeiro
-        if (supabaseGaleria) {
-            const { data, error } = await supabaseGaleria
-                .from('produtos')
-                .select('*')
-                .eq('id', idProduto)
-                .single();
-            if (!error && data) {
-                prod = data;
-            }
+        const { data: prod, error } = await cliente
+            .from('produtos')
+            .select('imagens, imagem_url')
+            .eq('id', idProduto)
+            .single();
+
+        if (error || !prod) return;
+
+        let lista = prod.imagens;
+        if (typeof lista === 'string') {
+            try { lista = JSON.parse(lista); } catch (e) { lista = []; }
         }
 
-        // Fallback para o localStorage se necessário
-        if (!prod) {
-            let lista = [];
-            try { lista = JSON.parse(localStorage.getItem('ls_produtos')) || []; } catch (e) {}
-            prod = lista.find(p => String(p.id) === String(idProduto));
-        }
-
-        if (!prod) return;
-
-        fotos = (prod.imagens && prod.imagens.length) ? prod.imagens : [prod.imagem_url || prod.imagem];
+        fotos = (Array.isArray(lista) && lista.length) ? lista : [prod.imagem_url || 'ls.png'];
 
         miniaturas.innerHTML = '';
         fotos.forEach((src, k) => {

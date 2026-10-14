@@ -50,6 +50,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const listaMapeada = data.map(p => ({
             id: p.id,
             dono: p.user_id,
+            donoNome: p.dono_nome || '',
             nome: p.titulo || p.nome,
             categoria: p.categoria,
             preco: Number(p.preco),
@@ -246,8 +247,9 @@ document.addEventListener('DOMContentLoaded', () => {
             }
             modalDiv.remove();
             
-            if (window.abrirContacto) {
-                window.abrirContacto(produto);
+            const abrirChat = window.abrirChatComVendedor || window.abrirContacto;
+            if (abrirChat) {
+                abrirChat(produto);
             } else {
                 const btnChat = document.getElementById('btn-abrir-chat');
                 if (btnChat) btnChat.click();
@@ -402,13 +404,23 @@ document.addEventListener('DOMContentLoaded', () => {
             }
 
             let userId = null;
+            let userNome = '';
             if (supabaseLoja) {
                 const { data: { session } } = await supabaseLoja.auth.getSession();
-                if (session && session.user) userId = session.user.id;
+                if (session && session.user) {
+                    userId = session.user.id;
+                    userNome = (session.user.user_metadata && session.user.user_metadata.nome)
+                        || String(session.user.email || '').split('@')[0];
+                }
+                if (!userId) {
+                    alert('A sua sessão terminou. Saia e entre outra vez para publicar.');
+                    return;
+                }
             }
 
             const novoRegistoSupabase = {
                 user_id: userId,
+                dono_nome: userNome,
                 titulo: nome,
                 categoria: categoria,
                 preco: preco,

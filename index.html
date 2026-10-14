@@ -5,11 +5,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <link rel="shortcut icon" href="ls.png" type="image/x-icon">
     
-    <title>LS SHOPPING</title>
-    <link rel="stylesheet" href="style.css">
-
-    <!-- SUPABASE SDK (Obrigatório para ligar os scripts à nuvem) -->
-    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+ <title>LS SHOPPING</title>
+ <link rel="stylesheet" href="style.css">
 </head>
 <body>
     
@@ -22,10 +19,15 @@
     <div class="bloco-usuario">
         <div class="linha-nome-msg">
             <span>Olá <strong id="nome-usuario">Utilizador</strong></span>
+
+
+            
+
         </div>
         <button id="btn-sair" class="btn-sair">Sair</button>
-    </div> 
-    <button id="btn-abrir-chat" class="btn-chat-sem-flutuante" type="button" aria-label="Abrir-chat"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor"><path d="M3 3H21C21.5523 3 22 3.44772 22 4V20C22 20.5523 21.5523 21 21 21H3C2.44772 21 2 20.5523 2 20V4C2 3.44772 2.44772 3 3 3ZM20 7.23792L12.0718 14.338L4 7.21594V19H20V7.23792ZM4.51146 5L12.0619 11.662L19.501 5H4.51146Z"></path></svg>
+
+
+    </div> <button id="btn-abrir-chat" class="btn-chat-sem-flutuante" type="button" aria-label="Abrir-chat"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor"><path d="M3 3H21C21.5523 3 22 3.44772 22 4V20C22 20.5523 21.5523 21 21 21H3C2.44772 21 2 20.5523 2 20V4C2 3.44772 2.44772 3 3 3ZM20 7.23792L12.0718 14.338L4 7.21594V19H20V7.23792ZM4.51146 5L12.0619 11.662L19.501 5H4.51146Z"></path></svg>
 </button>
     
     
@@ -257,6 +259,9 @@
     </div>
 </div>
 
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="supabase-config.js"></script>
 <script src="script.js"></script>
 <script src="menu.js"></script>
 <script src="conta.js"></script>
@@ -265,7 +270,5 @@
 <script src="meus-produtos.js"></script>
 <script src="chat.js"></script>
 <script src="loja.js"></script>
-<script src="supabase-config.js"></script>
-
 </body>
 </html>

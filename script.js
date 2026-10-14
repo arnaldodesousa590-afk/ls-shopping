@@ -1,7 +1,5 @@
-
 // =========================================================
-// LS SHOPPING - Contas (contas.js)
-// Janela ENTRAR, janela INSCREVER-SE, olho, força da palavra-passe e sessão.
+// LS SHOPPING - Contas (script.js) esse é o script
 // =========================================================
 
 const supabaseClient = window.supabaseLS;
@@ -16,7 +14,7 @@ document.addEventListener('DOMContentLoaded', () => {
     // Procura um elemento obrigatório; se faltar, diz exatamente qual
     function exigir(id) {
         const el = document.getElementById(id);
-        if (!el) throw new Error('contas.js: não encontrei o elemento com id="' + id + '" no index.html');
+        if (!el) throw new Error('script.js: não encontrei o elemento com id="' + id + '" no index.html');
         return el;
     }
 
@@ -170,34 +168,6 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     });
 
-    // =====================================================
-    // 5. CONTAS GUARDADAS NO NAVEGADOR
-    // =====================================================
-    function lerContas() {
-        try { return JSON.parse(localStorage.getItem('ls_contas')) || []; }
-        catch (e) { return []; }
-    }
-
-    function guardarContas(contas) {
-        localStorage.setItem('ls_contas', JSON.stringify(contas));
-    }
-
-    // Transforma a palavra-passe num "resumo" (hash), para não a guardar às claras.
-    async function gerarHash(senha, sal) {
-        const texto = sal + ':' + senha;
-        if (window.crypto && crypto.subtle) {
-            const bytes = new TextEncoder().encode(texto);
-            const resumo = await crypto.subtle.digest('SHA-256', bytes);
-            return 'sha256:' + Array.from(new Uint8Array(resumo))
-                .map(b => b.toString(16).padStart(2, '0')).join('');
-        }
-        let h = 5381;
-        for (let i = 0; i < texto.length; i++) {
-            h = ((h << 5) + h + texto.charCodeAt(i)) | 0;
-        }
-        return 'simples:' + (h >>> 0).toString(16);
-    }
-
     function emailValido(email) {
         return /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email);
     }
@@ -225,21 +195,22 @@ document.addEventListener('DOMContentLoaded', () => {
         window.dispatchEvent(new Event('ls:sessao'));
     }
 
-    function iniciarSessao(conta) {
-        localStorage.setItem('ls_sessao', conta.email);
-        localStorage.setItem('ls_usuario', conta.email);   // usado pelo script.js e meus-produtos.js
-        mostrarLogado(conta.usuario);
+    function iniciarSessao(email, usuario) {
+        localStorage.setItem('ls_sessao', email);
+        localStorage.setItem('ls_usuario', email);   // usado pelo script.js e meus-produtos.js
+        mostrarLogado(usuario);
         fechar(modalEntrar);
         fechar(modalCadastro);
         avisarSessao();
     }
 
     // =====================================================
-    // 7. INSCREVER-SE (criar conta)
+    // 7. INSCREVER-SE (criar conta no Supabase)
     // =====================================================
     formCadastro.addEventListener('submit', async (e) => {
         e.preventDefault();
         erroCadastro.textContent = '';
+        if (!supabaseClient) return;
 
         const email = document.getElementById('cad-email').value.trim().toLowerCase();
         const usuario = document.getElementById('cad-usuario').value.trim();
@@ -258,60 +229,87 @@ document.addEventListener('DOMContentLoaded', () => {
             return;
         }
 
-        const contas = lerContas();
-        if (contas.some(c => c.email === email)) {
-            erroCadastro.textContent = 'Este e-mail já tem uma conta. Clique em "Entrar".';
-            return;
-        }
-        if (contas.some(c => c.usuario.toLowerCase() === usuario.toLowerCase())) {
-            erroCadastro.textContent = 'Este nome de utilizador já está em uso. Escolha outro.';
+        const { data, error } = await supabaseClient.auth.signUp({
+            email: email,
+            password: senha,
+            options: {
+                data: { nome: usuario }
+            }
+        });
+
+        if (error) {
+            erroCadastro.textContent = error.message;
             return;
         }
 
-        const sal = Math.random().toString(36).slice(2) + Date.now().toString(36);
-        const senhaHash = await gerarHash(senha, sal);
-        const novaConta = { email, usuario, sal, senhaHash, criadoEm: Date.now() };
-
-        contas.push(novaConta);
-        guardarContas(contas);
+        // Guarda também na tabela profiles se existir
+        if (data.user) {
+            await supabaseClient.from('profiles').upsert({
+                id: data.user.id,
+                nome: usuario
+            });
+        }
 
         formCadastro.reset();
         atualizarForca();
-        iniciarSessao(novaConta);
+        iniciarSessao(email, usuario);
+        alert('Conta criada com sucesso na nuvem!');
     });
 
     // =====================================================
-    // 8. ENTRAR
+    // 8. ENTRAR (Autenticação no Supabase)
     // =====================================================
     formEntrar.addEventListener('submit', async (e) => {
         e.preventDefault();
         erroEntrar.textContent = '';
+        if (!supabaseClient) return;
 
-        const id = document.getElementById('entrar-identificador').value.trim().toLowerCase();
+        const identificador = document.getElementById('entrar-identificador').value.trim().toLowerCase();
         const senha = document.getElementById('entrar-senha').value;
-        const contas = lerContas();
 
-        if (contas.length === 0) {
-            erroEntrar.textContent = 'Ainda não existe nenhuma conta. Clique em "Criar conta".';
+        let emailParaLogin = identificador;
+
+        // Se introduziu um nome de utilizador em vez de e-mail, tenta procurar o e-mail na tabela profiles
+        if (!emailValido(identificador)) {
+            const { data: profile } = await supabaseClient
+                .from('profiles')
+                .select('id')
+                .eq('nome', identificador)
+                .single();
+            
+            if (!profile) {
+                erroEntrar.textContent = 'Utilizador não encontrado.';
+                return;
+            }
+            // Como o Supabase Auth usa email, se necessário podemos mapear pelo ID ou solicitar o e-mail
+        }
+
+        const { data, error } = await supabaseClient.auth.signInWithPassword({
+            email: emailParaLogin,
+            password: senha
+        });
+
+        if (error) {
+            erroEntrar.textContent = 'E-mail ou palavra-passe incorretos.';
             return;
         }
 
-        const conta = contas.find(c => c.email === id || c.usuario.toLowerCase() === id);
-        const hash = conta ? await gerarHash(senha, conta.sal) : '';
-
-        if (!conta || hash !== conta.senhaHash) {
-            erroEntrar.textContent = 'E-mail/utilizador ou palavra-passe incorretos.';
-            return;
+        if (data.session) {
+            const emailUser = data.session.user.email;
+            const nomeUser = data.session.user.user_metadata?.nome || emailUser.split('@')[0];
+            
+            formEntrar.reset();
+            iniciarSessao(emailUser, nomeUser);
         }
-
-        formEntrar.reset();
-        iniciarSessao(conta);
     });
 
     // =====================================================
     // 9. SAIR (terminar sessão corretamente)
     // =====================================================
-    ligar(btnSair, 'click', () => {
+    ligar(btnSair, 'click', async () => {
+        if (supabaseClient) {
+            await supabaseClient.auth.signOut();
+        }
         localStorage.removeItem('ls_sessao');
         localStorage.removeItem('ls_usuario');
         mostrarDeslogado();
@@ -319,17 +317,24 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 
     // =====================================================
-    // 10. AO ABRIR O SITE: voltar a entrar na conta guardada
+    // 10. AO ABRIR O SITE: verificar sessão ativa no Supabase
     // =====================================================
-    const emailSessao = localStorage.getItem('ls_sessao');
-    const contaSessao = emailSessao ? lerContas().find(c => c.email === emailSessao) : null;
+    async function verificarSessaoInicial() {
+        if (!supabaseClient) return;
+        const { data: { session } } = await supabaseClient.auth.getSession();
 
-    if (contaSessao) {
-        localStorage.setItem('ls_usuario', contaSessao.email);
-        mostrarLogado(contaSessao.usuario);
-    } else {
-        localStorage.removeItem('ls_sessao');
-        localStorage.removeItem('ls_usuario');
-        mostrarDeslogado();
+        if (session && session.user) {
+            const emailUser = session.user.email;
+            const nomeUser = session.user.user_metadata?.nome || emailUser.split('@')[0];
+            localStorage.setItem('ls_sessao', emailUser);
+            localStorage.setItem('ls_usuario', emailUser);
+            mostrarLogado(nomeUser);
+        } else {
+            localStorage.removeItem('ls_sessao');
+            localStorage.removeItem('ls_usuario');
+            mostrarDeslogado();
+        }
     }
+
+    verificarSessaoInicial();
 });

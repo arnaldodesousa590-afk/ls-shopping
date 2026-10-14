@@ -12,6 +12,8 @@ document.addEventListener('DOMContentLoaded', () => {
 
     let conversaAtiva = null;
     let cacheConversas = [];
+    let meuId = '';      // ID do utilizador no Supabase (identifica o vendedor)
+    let meuNome = '';    // nome de utilizador (mostrado no chat)
 
     function usuarioAtual() {
         return localStorage.getItem('ls_sessao') || localStorage.getItem('ls_usuario') || '';
@@ -21,15 +23,45 @@ document.addEventListener('DOMContentLoaded', () => {
         return String(email || '').split('@')[0];
     }
 
+    // Vai buscar o ID e o nome do utilizador com sessão no Supabase
+    async function carregarMeuId() {
+        meuId = '';
+        meuNome = '';
+        if (!supabaseChat) return;
+        const { data } = await supabaseChat.auth.getSession();
+        if (data && data.session && data.session.user) {
+            const u = data.session.user;
+            meuId = u.id;
+            meuNome = (u.user_metadata && u.user_metadata.nome) || nomeDe(u.email);
+        }
+    }
+
+    // O vendedor é guardado pelo ID; o comprador pelo e-mail
+    function souVendedor(c) {
+        return !!meuId && c.vendedor === meuId;
+    }
+
+    function participo(c) {
+        return c.comprador === usuarioAtual() || souVendedor(c);
+    }
+
+    function nomeDoOutro(c) {
+        if (souVendedor(c)) return c.compradorNome || nomeDe(c.comprador);
+        return c.vendedorNome || 'Vendedor';
+    }
+
     async function lerConversasSupabase() {
         if (!supabaseChat) return [];
         const eu = usuarioAtual();
         if (!eu) return [];
 
+        let filtro = `comprador.eq.${eu}`;
+        if (meuId) filtro += `,vendedor.eq.${meuId}`;
+
         const { data, error } = await supabaseChat
             .from('mensagens')
             .select('*')
-            .or(`comprador.eq.${eu},vendedor.eq.${eu}`)
+            .or(filtro)
             .order('atualizada_em', { ascending: false });
 
         if (error || !data) return [];
@@ -39,7 +71,9 @@ document.addEventListener('DOMContentLoaded', () => {
             produtoId: c.produto_id,
             produtoNome: c.produto_nome,
             vendedor: c.vendedor,
+            vendedorNome: c.vendedor_nome || '',
             comprador: c.comprador,
+            compradorNome: c.comprador_nome || '',
             criadaEm: new Date(c.criada_em).getTime(),
             atualizadaEm: new Date(c.atualizada_em).getTime(),
             expiraEm: new Date(c.expira_em).getTime(),
@@ -78,7 +112,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     function totalNaoLidas(eu) {
         return cacheConversas
-            .filter(c => c.vendedor === eu || c.comprador === eu)
+            .filter(c => participo(c))
             .reduce((soma, c) => soma + naoLidas(c, eu), 0);
     }
 
@@ -104,21 +138,25 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     // Criar ou obter conversa
-    async function obterConversa(prod, comprador) {
-        const donoProd = prod.dono || prod.user_id || comprador;
+    async function obterConversa(prod, comprador, donoProd) {
         const idConv = 'p' + prod.id + '_' + comprador;
-        
+
+        // Atualiza a lista antes, para nunca apagar uma conversa que já existe
+        await lerConversasSupabase();
+
         let c = cacheConversas.find(x => x.id === idConv);
         if (!c) {
             const agora = new Date();
             const expira = new Date(agora.getTime() + DIAS_HISTORICO * UM_DIA);
-            
+
             const novaConv = {
                 id: idConv,
                 produto_id: String(prod.id),
                 produto_nome: prod.nome || prod.titulo,
                 vendedor: donoProd,
+                vendedor_nome: prod.donoNome || '',
                 comprador: comprador,
+                comprador_nome: meuNome,
                 criada_em: agora.toISOString(),
                 atualizada_em: agora.toISOString(),
                 expira_em: expira.toISOString(),
@@ -127,7 +165,13 @@ document.addEventListener('DOMContentLoaded', () => {
             };
 
             if (supabaseChat) {
-                await supabaseChat.from('mensagens').upsert([novaConv]);
+                const { error } = await supabaseChat
+                    .from('mensagens')
+                    .upsert([novaConv], { onConflict: 'id', ignoreDuplicates: true });
+                if (error) {
+                    alert('Não foi possível iniciar a conversa.');
+                    return null;
+                }
             }
 
             c = {
@@ -135,7 +179,9 @@ document.addEventListener('DOMContentLoaded', () => {
                 produtoId: prod.id,
                 produtoNome: prod.nome || prod.titulo,
                 vendedor: donoProd,
+                vendedorNome: prod.donoNome || '',
                 comprador: comprador,
+                compradorNome: meuNome,
                 criadaEm: agora.getTime(),
                 atualizadaEm: agora.getTime(),
                 expiraEm: expira.getTime(),
@@ -198,14 +244,21 @@ document.addEventListener('DOMContentLoaded', () => {
             clicar('btn-abrir-login');
             return;
         }
-        
+
+        if (!meuId) await carregarMeuId();
+
         const donoProd = prod.dono || prod.user_id;
-        if (donoProd && donoProd === eu) {
+        if (!donoProd) {
+            alert('Este anúncio não tem chat disponível. Use o WhatsApp.');
+            return;
+        }
+        if (donoProd === meuId || donoProd === eu) {
             alert('Este anúncio é seu.');
             return;
         }
 
-        const conversa = await obterConversa(prod, eu);
+        const conversa = await obterConversa(prod, eu, donoProd);
+        if (!conversa) return;
         abrirMensagens(conversa.id);
     };
 
@@ -234,7 +287,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
         await lerConversasSupabase();
         const minhas = cacheConversas
-            .filter(c => (c.vendedor === eu || c.comprador === eu) &&
+            .filter(c => participo(c) &&
                          (c.mensagens.length > 0 || c.id === conversaAtiva))
             .sort((a, b) => (b.atualizadaEm || 0) - (a.atualizadaEm || 0));
 
@@ -247,8 +300,7 @@ document.addEventListener('DOMContentLoaded', () => {
         }
 
         minhas.forEach(c => {
-            const outro = (c.vendedor === eu) ? c.comprador : c.vendedor;
-            const nome = nomeDe(outro);
+            const nome = nomeDoOutro(c);
             const ultima = c.mensagens[c.mensagens.length - 1];
             const n = naoLidas(c, eu);
 
@@ -331,7 +383,7 @@ document.addEventListener('DOMContentLoaded', () => {
             return;
         }
 
-        const outro = (c.vendedor === eu) ? c.comprador : c.vendedor;
+        const nomeOutro = nomeDoOutro(c);
         area.innerHTML = `
             <div class="msg-conv-topo">
                 <button type="button" class="msg-conv-voltar" aria-label="Voltar à lista">←</button>
@@ -349,8 +401,8 @@ document.addEventListener('DOMContentLoaded', () => {
             </form>
         `;
 
-        area.querySelector('.msg-avatar').textContent = nomeDe(outro).charAt(0).toUpperCase();
-        area.querySelector('.msg-conv-nome').textContent = nomeDe(outro);
+        area.querySelector('.msg-avatar').textContent = nomeOutro.charAt(0).toUpperCase();
+        area.querySelector('.msg-conv-nome').textContent = nomeOutro;
         area.querySelector('.msg-conv-produto').textContent = 'Produto: ' + c.produtoNome;
 
         area.querySelector('.msg-conv-voltar').addEventListener('click', () => {
@@ -446,10 +498,14 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 
     window.addEventListener('ls:sessao', async () => {
+        await carregarMeuId();
         fecharMensagens();
         await atualizarSelo();
     });
 
-    limparExpiradas();
-    atualizarSelo();
+    (async () => {
+        await carregarMeuId();
+        await limparExpiradas();
+        await atualizarSelo();
+    })();
 });

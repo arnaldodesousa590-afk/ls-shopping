@@ -1,6 +1,6 @@
 // =========================================================
 // LS SHOPPING - Meus Produtos (meus-produtos.js)
-// Versão Supabase Integrada com Ligação Centralizada
+// Zona à parte onde o vendedor gere os seus anúncios.
 // =========================================================
 
 const supabaseMeus = window.supabaseLS;
@@ -135,6 +135,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 </div>
             `;
 
+            // Os textos entram com textContent (seguro, não interpreta HTML)
             cartao.querySelector('img').src = p.imagem;
             cartao.querySelector('h3').textContent = p.nome;
             cartao.querySelector('.meu-produto-detalhes').textContent =
