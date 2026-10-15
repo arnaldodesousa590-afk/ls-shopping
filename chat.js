@@ -364,6 +364,8 @@ document.addEventListener('DOMContentLoaded', () => {
             bolha.className = 'msg-bolha ' + (m.de === eu ? 'minha' : 'dele');
             const texto = document.createElement('span');
             texto.textContent = m.texto;
+            texto.style.whiteSpace = 'pre-wrap';        // respeita as mudanças de linha
+            texto.style.overflowWrap = 'anywhere';
             const hora = document.createElement('small');
             hora.textContent = formatarHora(m.em);
             bolha.appendChild(texto);
@@ -400,7 +402,7 @@ document.addEventListener('DOMContentLoaded', () => {
             <div class="msg-mensagens"></div>
             <p class="msg-aviso-historico">Por privacidade, a conversa é guardada ${DIAS_HISTORICO} dias após a última mensagem e depois é eliminada.</p>
             <form class="msg-form">
-                <input type="text" class="msg-input" placeholder="Escreva a mensagem..." maxlength="1000" autocomplete="off">
+                <textarea class="msg-input" rows="1" placeholder="Escreva a mensagem..." maxlength="1000" autocomplete="off" enterkeyhint="enter"></textarea>
                 <button type="submit">Enviar</button>
             </form>
         `;
@@ -415,11 +417,37 @@ document.addEventListener('DOMContentLoaded', () => {
 
         const form = area.querySelector('.msg-form');
         const input = area.querySelector('.msg-input');
+
+        // Campo de várias linhas que cresce à medida que se escreve (até 5 linhas)
+        input.style.resize = 'none';
+        input.style.fontFamily = 'inherit';
+        input.style.overflowY = 'auto';
+        input.style.lineHeight = '1.4';
+        input.style.maxHeight = '120px';
+        function ajustarAltura() {
+            input.style.height = 'auto';
+            input.style.height = Math.min(input.scrollHeight, 120) + 'px';
+        }
+        input.addEventListener('input', ajustarAltura);
+
+        // No telemóvel o Enter muda de linha (envia-se com o botão "Enviar").
+        // No computador o Enter envia e Shift+Enter muda de linha.
+        const ecraDeToque = !!(window.matchMedia && window.matchMedia('(pointer: coarse)').matches);
+        input.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter' && !e.shiftKey && !e.isComposing && !ecraDeToque) {
+                e.preventDefault();
+                const botaoEnviar = form.querySelector('button[type="submit"]');
+                if (botaoEnviar) botaoEnviar.click();
+            }
+        });
+
         form.addEventListener('submit', async (e) => {
             e.preventDefault();
             const texto = input.value.trim();
             if (!texto) return;
             input.value = '';
+            ajustarAltura();
+            input.focus();   // o teclado do telemóvel fica aberto para a mensagem seguinte
             await enviar(texto);
         });
 

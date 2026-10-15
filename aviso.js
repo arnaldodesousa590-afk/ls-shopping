@@ -298,6 +298,63 @@
     var tPilula = null;
     var tEsconder = null;
 
+    // O ícone da aba do navegador gira enquanto o site processa
+    // (como o círculo de carregamento que os outros sites mostram)
+    var iconeLink = null;
+    var iconeOriginal = null;
+    var tIcone = null;
+    var angulo = 0;
+
+    function desenharIcone() {
+        var c = document.createElement('canvas');
+        c.width = 32;
+        c.height = 32;
+        var g = c.getContext('2d');
+        g.lineWidth = 4;
+        g.lineCap = 'round';
+        g.strokeStyle = 'rgba(0, 39, 128, 0.2)';
+        g.beginPath(); g.arc(16, 16, 11, 0, Math.PI * 2); g.stroke();
+        g.strokeStyle = AZUL;
+        g.beginPath(); g.arc(16, 16, 11, angulo, angulo + Math.PI * 1.2); g.stroke();
+        return c.toDataURL('image/png');
+    }
+
+    function iniciarIcone() {
+        if (tIcone) return;
+        try {
+            iconeLink = document.querySelector('link[rel~="icon"]');
+            if (iconeLink) {
+                iconeOriginal = { href: iconeLink.getAttribute('href'), type: iconeLink.getAttribute('type') };
+            } else {
+                iconeLink = document.createElement('link');
+                iconeLink.rel = 'icon';
+                document.head.appendChild(iconeLink);
+                iconeOriginal = null;
+            }
+            tIcone = setInterval(function () {
+                angulo += 0.55;
+                iconeLink.setAttribute('type', 'image/png');
+                iconeLink.setAttribute('href', desenharIcone());
+            }, 90);
+        } catch (e) { /* o ícone a girar é só um extra */ }
+    }
+
+    function pararIcone() {
+        if (!tIcone) return;
+        clearInterval(tIcone);
+        tIcone = null;
+        try {
+            if (iconeOriginal) {
+                iconeLink.setAttribute('href', iconeOriginal.href);
+                if (iconeOriginal.type) iconeLink.setAttribute('type', iconeOriginal.type);
+                else iconeLink.removeAttribute('type');
+            } else if (iconeLink && iconeLink.parentNode) {
+                iconeLink.parentNode.removeChild(iconeLink);
+            }
+        } catch (e) { /* ignorar */ }
+        iconeLink = null;
+    }
+
     function mudou(delta) {
         pendentes = Math.max(0, pendentes + delta);
         montar();
@@ -307,7 +364,7 @@
             clearTimeout(tEsconder);
             // Pedidos rápidos não mostram nada (evita piscar)
             if (!tBarra && !barra.classList.contains('ativa')) {
-                tBarra = setTimeout(function () { barra.classList.add('ativa'); tBarra = null; }, 150);
+                tBarra = setTimeout(function () { barra.classList.add('ativa'); iniciarIcone(); tBarra = null; }, 150);
             }
             if (!tPilula && !pilula.classList.contains('ativa')) {
                 tPilula = setTimeout(function () { pilula.classList.add('ativa'); tPilula = null; }, 500);
@@ -319,6 +376,7 @@
             tEsconder = setTimeout(function () {
                 barra.classList.remove('ativa');
                 pilula.classList.remove('ativa');
+                pararIcone();
             }, 200);
         }
     }

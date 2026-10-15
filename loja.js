@@ -129,7 +129,7 @@ document.addEventListener('DOMContentLoaded', () => {
             const descTexto = p.descricao || 'Sem descrição informada.';
             const precisaVerMais = descTexto.length > 45;
             const unidadesTexto = p.unidades > 0
-                ? (p.unidades === 1 ? '1 unidade disponível' : p.unidades + ' unidades disponíveis')
+                ? 'Quantidade disponível: ' + p.unidades
                 : 'Esgotado';
             const unidadesCor = p.unidades > 0 ? '#64748b' : '#c62828';
 

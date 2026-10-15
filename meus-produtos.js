@@ -42,7 +42,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     <option value="outros">Outros</option>
                 </select>
                 <input type="number" name="preco" placeholder="Preço" min="0" required>
-                <input type="number" name="unidades" placeholder="Unidades" min="0" required>
+                <input type="number" name="unidades" placeholder="Quantidade" min="0" required>
                 <input type="tel" name="contacto" placeholder="Número de Telefone/ WhatsApp" required>
                 <textarea name="descricao" placeholder="Descrição do produto" rows="4" required></textarea>
                 <div class="editar-botoes">
@@ -140,7 +140,7 @@ document.addEventListener('DOMContentLoaded', () => {
             cartao.querySelector('img').src = p.imagem;
             cartao.querySelector('h3').textContent = p.nome;
             cartao.querySelector('.meu-produto-detalhes').textContent =
-                Number(p.preco).toLocaleString('pt-AO') + ' Kz · ' + p.unidades + ' un. · ' + p.categoria;
+                Number(p.preco).toLocaleString('pt-AO') + ' Kz · Quantidade: ' + p.unidades + ' · ' + p.categoria;
 
             const estado = cartao.querySelector('.meu-produto-estado');
             const dias = diasRestantes(p);

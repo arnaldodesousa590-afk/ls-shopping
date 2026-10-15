@@ -25,6 +25,11 @@ document.addEventListener('DOMContentLoaded', () => {
     const miniaturas = galeria.querySelector('.galeria-miniaturas');
     let fotos = [];
     let atual = 0;
+    let bloqueouScroll = false;
+
+    // No telemóvel: a foto não arrasta a página para os lados e a tira de miniaturas desliza sozinha
+    galeria.style.touchAction = 'pan-y pinch-zoom';
+    miniaturas.style.touchAction = 'pan-x';
 
     // 2. Mostrar a foto número i
     function mostrar(i) {
@@ -66,12 +71,21 @@ document.addEventListener('DOMContentLoaded', () => {
         });
 
         galeria.classList.toggle('uma-foto', fotos.length < 2);
+        // Enquanto a galeria está aberta, a página por baixo fica parada
+        if (!document.body.classList.contains('sem-scroll')) {
+            document.body.classList.add('sem-scroll');
+            bloqueouScroll = true;
+        }
         galeria.classList.add('aberta');
         mostrar(0);
     }
 
     function fechar() {
         galeria.classList.remove('aberta');
+        if (bloqueouScroll) {
+            document.body.classList.remove('sem-scroll');
+            bloqueouScroll = false;
+        }
     }
 
     // 4. Eventos
@@ -93,4 +107,33 @@ document.addEventListener('DOMContentLoaded', () => {
         if (e.key === 'ArrowLeft') mostrar(atual - 1);
         if (e.key === 'ArrowRight') mostrar(atual + 1);
     });
+
+    // 5. Deslizar o dedo: para a esquerda = foto seguinte, para a direita = foto anterior
+    let toqueX = 0;
+    let toqueY = 0;
+    let tocando = false;
+
+    galeria.addEventListener('touchstart', (e) => {
+        if (e.touches.length !== 1 || e.target.closest('.galeria-miniaturas')) {
+            tocando = false;
+            return;
+        }
+        toqueX = e.touches[0].clientX;
+        toqueY = e.touches[0].clientY;
+        tocando = true;
+    }, { passive: true });
+
+    galeria.addEventListener('touchend', (e) => {
+        if (!tocando) return;
+        tocando = false;
+        if (fotos.length < 2 || !e.changedTouches.length) return;
+
+        const dx = e.changedTouches[0].clientX - toqueX;
+        const dy = e.changedTouches[0].clientY - toqueY;
+
+        // Só conta se foi um deslize claro e mais para os lados do que para cima/baixo
+        if (Math.abs(dx) > 50 && Math.abs(dx) > Math.abs(dy) * 1.5) {
+            mostrar(dx < 0 ? atual + 1 : atual - 1);
+        }
+    }, { passive: true });
 });
