@@ -107,6 +107,7 @@ document.addEventListener('DOMContentLoaded', () => {
             return;
         }
 
+        lista.innerHTML = '<p class="painel-meus-vazio">A carregar os seus produtos...</p>';
         const meus = await lerProdutosSupabase();
         lista.innerHTML = '';
 
@@ -176,13 +177,25 @@ document.addEventListener('DOMContentLoaded', () => {
             alert('Não foi possível atualizar o estado.');
             return;
         }
+        avisoOk(estadoAtual ? 'Anúncio publicado outra vez.' : 'Anúncio atualizado.');
         if (window.recarregarVitrine) window.recarregarVitrine();
         await desenhar();
     }
 
+    // Confirmação do site (aviso.js); se não existir, usa a do navegador
+    function pedirConfirmacao(mensagem, rotulo) {
+        if (window.confirmar) return window.confirmar(mensagem, { sim: rotulo, perigo: true });
+        return Promise.resolve(confirm(mensagem));
+    }
+
+    function avisoOk(mensagem) {
+        if (window.avisar) window.avisar(mensagem, 'ok');
+    }
+
     // Marcar como vendido = o anúncio é eliminado
     async function marcarVendido(id) {
-        if (!confirm('Marcar como vendido vai ELIMINAR este anúncio do site. Continuar?')) return;
+        const confirmado = await pedirConfirmacao('Marcar como vendido vai ELIMINAR este anúncio do site. Continuar?', 'Marcar como vendido');
+        if (!confirmado) return;
         if (!supabaseMeus) return;
 
         const { error } = await supabaseMeus
@@ -194,12 +207,14 @@ document.addEventListener('DOMContentLoaded', () => {
             alert('Não foi possível eliminar o anúncio: ' + error.message);
             return;
         }
+        avisoOk('Anúncio marcado como vendido e eliminado.');
         if (window.recarregarVitrine) window.recarregarVitrine();
         await desenhar();
     }
 
     async function eliminar(id) {
-        if (!confirm('Eliminar este anúncio? Esta ação não pode ser desfeita.')) return;
+        const confirmado = await pedirConfirmacao('Eliminar este anúncio? Esta ação não pode ser desfeita.', 'Eliminar');
+        if (!confirmado) return;
         if (!supabaseMeus) return;
 
         const { error } = await supabaseMeus
@@ -211,6 +226,7 @@ document.addEventListener('DOMContentLoaded', () => {
             alert('Não foi possível eliminar o anúncio.');
             return;
         }
+        avisoOk('Anúncio eliminado.');
         if (window.recarregarVitrine) window.recarregarVitrine();
         await desenhar();
     }
@@ -256,6 +272,7 @@ document.addEventListener('DOMContentLoaded', () => {
             return;
         }
 
+        avisoOk('Alterações guardadas.');
         fecharEdicao();
         if (window.recarregarVitrine) window.recarregarVitrine();
         await desenhar();

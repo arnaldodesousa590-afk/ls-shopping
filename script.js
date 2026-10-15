@@ -313,6 +313,7 @@ document.addEventListener('DOMContentLoaded', () => {
             
             formEntrar.reset();
             iniciarSessao(emailUser, nomeUser);
+            if (window.avisar) window.avisar('Bem-vindo, ' + nomeUser + '!', 'ok');
         }
     });
 
@@ -327,6 +328,7 @@ document.addEventListener('DOMContentLoaded', () => {
         localStorage.removeItem('ls_usuario');
         mostrarDeslogado();
         avisarSessao();
+        if (window.avisar) window.avisar('Sessão terminada.', 'info');
     });
 
     // =====================================================

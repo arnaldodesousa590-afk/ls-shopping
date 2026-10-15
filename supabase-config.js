@@ -21,6 +21,11 @@ if (SUPABASE_CHAVE_LS.length < 40) {
 }
 
 // A ligação que todos os ficheiros partilham
+// Os pedidos passam pelo aviso.js, que mostra "A processar..." enquanto esperam
 window.supabaseLS = window.supabase
-    ? window.supabase.createClient(SUPABASE_URL_LS, SUPABASE_CHAVE_LS)
+    ? window.supabase.createClient(SUPABASE_URL_LS, SUPABASE_CHAVE_LS, {
+        global: {
+            fetch: (...args) => (window.lsFetch ? window.lsFetch(...args) : fetch(...args))
+        }
+    })
     : null;

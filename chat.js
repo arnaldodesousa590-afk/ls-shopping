@@ -284,9 +284,12 @@ document.addEventListener('DOMContentLoaded', () => {
         const eu = usuarioAtual();
         const caixa = painel.querySelector('.msg-lista');
         if (!caixa) return;
-        caixa.innerHTML = '';
+        if (!caixa.children.length) {
+            caixa.innerHTML = '<p class="msg-lista-vazia">A carregar conversas...</p>';
+        }
 
         await lerConversasSupabase();
+        caixa.innerHTML = '';
         const minhas = cacheConversas
             .filter(c => participo(c) &&
                          (c.mensagens.length > 0 || c.id === conversaAtiva))

@@ -71,6 +71,12 @@ document.addEventListener('DOMContentLoaded', () => {
     async function renderizarVitrine() {
         if (!gridProdutos) return;
 
+        gridProdutos.innerHTML = `
+            <div style="grid-column: 1 / -1; display: flex; align-items: center; justify-content: center; gap: 10px; padding: 50px 20px; color: #64748b; font-size: 14px;">
+                <span class="ls-spinner ls-spinner-escuro"></span> A carregar produtos...
+            </div>
+        `;
+
         let produtos = await lerProdutos();
         let temFiltroAtivo = false;
 
