@@ -1511,55 +1511,29 @@ body.sem-scroll{
         box-sizing: border-box;
     }
 
-    /* ---- Botões fixos de baixo (Mensagens e +Anunciar): ficam numa barra e não tapam os produtos ---- */
-    .btn-chat-sem-flutuante,
-    .btn-anunciar {
-        position: fixed !important;
-        top: auto !important;
-        bottom: calc(12px + env(safe-area-inset-bottom, 0px)) !important;
-        z-index: 900 !important;
-        height: 46px !important;
-        margin: 0 !important;
-        box-sizing: border-box;
+    /* ---- Botões fixos de baixo (Mensagens e +Anunciar) ----
+       Os botões ficam exatamente como estavam. Por baixo deles há uma zona INVISÍVEL
+       (da cor do fundo): os produtos esvanecem-se antes de lá chegar e nunca ficam
+       por trás dos botões. No fim da página há espaço extra para o último produto
+       poder subir acima dessa zona. Só existe com a sessão iniciada. */
+    .usuario-logado::after {
+        content: '';
+        position: fixed;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        height: calc(78px + env(safe-area-inset-bottom, 0px));
+        background: linear-gradient(to bottom, rgba(255, 255, 255, 0), #ffffff 24px);
+        z-index: 1;   /* acima dos produtos e abaixo dos botões */
     }
-    .btn-chat-sem-flutuante {
-        left: 14px !important;
-        right: auto !important;
-        min-width: 56px;
-    }
-    .btn-anunciar {
-        right: 14px !important;
-        left: auto !important;
-        padding: 0 20px !important;
-        font-size: 15px !important;
-        white-space: nowrap;
-    }
-    /* Barra branca por trás dos dois botões + espaço no fim da página para o último
-       produto não ficar escondido. Só aparece quando há sessão iniciada. */
     @supports selector(:has(*)) {
         body:has(#usuario-logado[style*="flex"]) {
             padding-bottom: calc(84px + env(safe-area-inset-bottom, 0px));
         }
-        body:has(#usuario-logado[style*="flex"])::after {
-            content: '';
-            position: fixed;
-            left: 0;
-            right: 0;
-            bottom: 0;
-            height: calc(70px + env(safe-area-inset-bottom, 0px));
-            background: #ffffff;
-            border-top: 1px solid #e2e8f0;
-            box-shadow: 0 -4px 14px rgba(15, 23, 42, 0.10);
-            z-index: 890;
-        }
     }
-    /* Com um painel aberto (chat, Meus Produtos, menu, galeria) a barra esconde-se */
-    body.sem-scroll .btn-chat-sem-flutuante,
-    body.sem-scroll .btn-anunciar {
-        display: none !important;
-    }
-    body.sem-scroll::after {
-        display: none !important;
+    /* com um painel aberto (chat, Meus Produtos, menu, galeria) a zona desaparece */
+    body.sem-scroll .usuario-logado::after {
+        display: none;
     }
 
     /* ---- Painéis de ecrã inteiro: não ficam tapados pela barra do navegador ---- */
