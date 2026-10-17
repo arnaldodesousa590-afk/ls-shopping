@@ -6,6 +6,8 @@
 // - Tempo real: as mensagens aparecem sem recarregar a página
 //   (se o tempo real falhar, atualiza sozinho de 15 em 15 segundos).
 // - Selo de mensagens não lidas, apagar conversa e histórico de 7 dias.
+// - Se não conseguir iniciar uma conversa, diz o motivo (tabela em falta,
+//   permissão, vendedor sem perfil...) e escreve o detalhe na consola (F12).
 //
 // Precisa de ter corrido o ficheiro supabase-setup.sql no Supabase.
 // =========================================================
@@ -391,6 +393,30 @@ document.addEventListener('DOMContentLoaded', () => {
         return 'Não foi possível enviar a mensagem. Verifique a ligação e tente outra vez.';
     }
 
+    // Explica porque falhou ao iniciar uma conversa (e não só "tente novamente")
+    function textoDoErroDeConversa(error) {
+        const msg = String((error && error.message) || '');
+        const codigo = String((error && error.code) || '');
+
+        if (codigo === '42P01' || codigo === 'PGRST205' ||
+            /does not exist|schema cache|could not find the table/i.test(msg)) {
+            return 'O chat ainda não está instalado na base de dados (falta correr o supabase-setup.sql no Supabase).';
+        }
+        if (codigo === '42501' || /row-level security|permission denied/i.test(msg)) {
+            return 'Sem permissão para iniciar a conversa. Verifique as regras (RLS) da tabela chat_conversas.';
+        }
+        if (codigo === '23503' || /foreign key/i.test(msg)) {
+            return 'Não foi possível iniciar a conversa: o vendedor deste anúncio não tem perfil registado.';
+        }
+        if (codigo === '22P02' || /invalid input syntax/i.test(msg)) {
+            return 'Não foi possível iniciar a conversa: um identificador não tem o formato esperado pela base de dados.';
+        }
+        if (/failed to fetch|network/i.test(msg)) {
+            return 'Sem ligação à internet. Tente outra vez.';
+        }
+        return 'Não foi possível iniciar a conversa. Tente outra vez.';
+    }
+
     async function enviar(texto) {
         const c = conversas.find(x => x.id === conversaAtiva);
         if (!c || !meuId) {
@@ -662,12 +688,16 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Chamado pela montra ("Contactar Vendedor" > "Falar no Site")
     window.abrirChatComVendedor = async function (prod) {
+        if (!supabaseChat) {
+            notificar('O chat não está disponível neste momento.', 'erro');
+            return;
+        }
         if (!(await garantirSessao())) {
             clicar('btn-abrir-login');
             return;
         }
 
-        const dono = String(prod.dono || prod.user_id || '');
+        const dono = String((prod && (prod.dono || prod.user_id)) || '');
         if (!dono) {
             notificar('Este anúncio não tem chat disponível. Use o WhatsApp.', 'aviso');
             return;
@@ -692,11 +722,20 @@ document.addEventListener('DOMContentLoaded', () => {
             });
             // 23505 = a conversa já existe (aberta noutro separador): não é erro
             if (error && error.code !== '23505') {
-                console.error('chat.js: erro a iniciar a conversa:', error.message);
-                notificar('Não foi possível iniciar a conversa. Tente outra vez.', 'erro');
+                // O detalhe completo fica na consola (F12) para se perceber a causa
+                console.error('chat.js: erro a iniciar a conversa:',
+                    { codigo: error.code, mensagem: error.message, detalhes: error.details, dica: error.hint });
+                notificar(textoDoErroDeConversa(error), 'erro');
                 return;
             }
             await carregarConversas();
+
+            // Foi criada mas não aparece na leitura: falta a permissão de leitura (SELECT)
+            if (!conversas.some(c => c.id === idConversa)) {
+                console.error('chat.js: a conversa foi criada mas não pode ser lida (verifique a regra SELECT de chat_conversas).');
+                notificar('A conversa foi criada mas não pode ser lida. Verifique a permissão de leitura da tabela chat_conversas.', 'erro');
+                return;
+            }
         }
         abrirMensagens(idConversa);
     };
@@ -730,6 +769,26 @@ document.addEventListener('DOMContentLoaded', () => {
         agendarAtualizacao();
     }
 
+    // A outra pessoa apagou a conversa (ou expirou): sai da minha lista na hora
+    function aoApagarConversa(velha) {
+        const id = velha && velha.id;
+        if (!id) return;
+        if (!conversas.some(c => c.id === id)) return;   // fui eu que apaguei: já foi tratado
+
+        conversas = conversas.filter(c => c.id !== id);
+        atualizarSelo();
+
+        if (conversaAtiva === id) {
+            conversaAtiva = null;
+            mensagens = [];
+            painel.classList.remove('ver-conversa');
+            mostrarConversa(null);
+            notificar('Esta conversa foi apagada.', 'aviso');
+        } else if (painelAberto()) {
+            desenharLista();
+        }
+    }
+
     function pararTempoReal() {
         if (canal) {
             try { supabaseChat.removeChannel(canal); } catch (e) { /* ignorar */ }
@@ -750,6 +809,8 @@ document.addEventListener('DOMContentLoaded', () => {
                     () => agendarAtualizacao())
                 .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'chat_conversas' },
                     () => agendarAtualizacao())
+                .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'chat_conversas' },
+                    (p) => aoApagarConversa(p.old))
                 .subscribe((estado) => {
                     tempoRealOk = (estado === 'SUBSCRIBED');
                     if (estado === 'SUBSCRIBED') {
