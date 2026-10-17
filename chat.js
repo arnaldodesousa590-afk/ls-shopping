@@ -5,7 +5,8 @@
 //   mensagens quando duas pessoas escrevem ao mesmo tempo).
 // - Tempo real: as mensagens aparecem sem recarregar a página
 //   (se o tempo real falhar, atualiza sozinho de 15 em 15 segundos).
-// - Selo de mensagens não lidas, apagar conversa e histórico de 7 dias.
+// - Selo de mensagens não lidas e histórico de 7 dias.
+// - "Apagar" esconde a conversa SÓ para quem apagou (a outra pessoa mantém a dela).
 // - Se não conseguir iniciar uma conversa, diz o motivo (tabela em falta,
 //   permissão, vendedor sem perfil...) e escreve o detalhe na consola (F12).
 //
@@ -118,7 +119,11 @@ document.addEventListener('DOMContentLoaded', () => {
             ultimaMensagem: c.ultima_mensagem || '',
             ultimaDe: c.ultima_de || '',
             ultimaEm: c.ultima_em ? new Date(c.ultima_em).getTime() : 0,
-            naoLidas: (souVendedor ? c.vendedor_nao_lidas : c.comprador_nao_lidas) || 0
+            naoLidas: (souVendedor ? c.vendedor_nao_lidas : c.comprador_nao_lidas) || 0,
+            // quando EU apaguei a conversa (0 = nunca apaguei)
+            apagouEm: (souVendedor ? c.vendedor_apagou_em : c.comprador_apagou_em)
+                ? new Date(souVendedor ? c.vendedor_apagou_em : c.comprador_apagou_em).getTime()
+                : 0
         };
     }
 
@@ -242,7 +247,7 @@ document.addEventListener('DOMContentLoaded', () => {
         caixa.innerHTML = '';
 
         const visiveis = conversas
-            .filter(c => c.ultimaMensagem || c.id === conversaAtiva)
+            .filter(c => (c.ultimaMensagem && c.ultimaEm > c.apagouEm) || c.id === conversaAtiva)
             .sort((a, b) => b.atualizadaEm - a.atualizadaEm);
 
         if (visiveis.length === 0) {
@@ -455,32 +460,31 @@ document.addEventListener('DOMContentLoaded', () => {
 
     async function apagarConversa(id) {
         const aviso = 'Tem a certeza que quer apagar esta conversa?\n' +
-                      'As mensagens serão eliminadas para os dois lados e não poderão ser recuperadas.';
+                      'Ela desaparece só para si. A outra pessoa continua a ver as mensagens dela.';
         const confirmado = window.confirmar
             ? await window.confirmar(aviso, { titulo: 'Apagar conversa', sim: 'Sim', nao: 'Não', perigo: true })
             : window.confirm(aviso);
         if (!confirmado) return;
 
-        // .select() devolve as linhas apagadas: se vier vazio, a base de dados bloqueou
-        const { data, error } = await supabaseChat
-            .from('chat_conversas')
-            .delete()
-            .eq('id', id)
-            .select('id');
+        // Esconde a conversa só para mim (a função está no supabase-setup.sql)
+        const { error } = await supabaseChat.rpc('chat_apagar_para_mim', { p_conversa: id });
 
-        if (error || !data || data.length === 0) {
-            if (error) console.error('chat.js: erro a apagar:', error.message);
-            notificar('Não foi possível apagar a conversa. Tente outra vez.', 'erro');
+        if (error) {
+            console.error('chat.js: erro a apagar:', error.message);
+            const faltaFuncao = /chat_apagar_para_mim|schema cache|does not exist/i.test(error.message || '');
+            notificar(faltaFuncao
+                ? 'Falta atualizar a base de dados: corra outra vez o supabase-setup.sql no Supabase.'
+                : 'Não foi possível apagar a conversa. Tente outra vez.', 'erro');
             return;
         }
 
-        conversas = conversas.filter(x => x.id !== id);
         conversaAtiva = null;
         mensagens = [];
         painel.classList.remove('ver-conversa');
+        await carregarConversas();
         await mostrarConversa(null);
         atualizarSelo();
-        notificar('Conversa apagada com sucesso.', 'ok');
+        notificar('Conversa apagada para si.', 'ok');
     }
 
     // ---------------------------------------------------------
