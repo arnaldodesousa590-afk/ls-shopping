@@ -2,7 +2,8 @@
 // LS SHOPPING - Contas (script.js)
 //
 // - Criar conta com CÓDIGO enviado por e-mail (confirma que o e-mail existe)
-// - Entrar (e pedir novo código se a conta ainda não foi confirmada)
+// - Entrar SÓ COM E-MAIL (o login por nome de utilizador está desativado)
+//   (e pedir novo código se a conta ainda não foi confirmada)
 // - "Esqueci a senha" com código por e-mail
 // - Sair (com pergunta "Tem a certeza?")
 //
@@ -59,6 +60,17 @@ document.addEventListener('DOMContentLoaded', () => {
     const barraForca = document.getElementById('forca-barra');
     const textoForca = document.getElementById('forca-texto');
     const campoSenhaCadastro = document.getElementById('cad-senha');
+
+    // Login só com e-mail: ajusta o texto e o campo da janela "Entrar"
+    // (assim não é preciso mexer no index.html)
+    const rotuloEntrar = document.querySelector('label[for="entrar-identificador"]');
+    if (rotuloEntrar) rotuloEntrar.textContent = 'E-mail';
+    const campoEntrarEmail = document.getElementById('entrar-identificador');
+    if (campoEntrarEmail) {
+        campoEntrarEmail.type = 'email';
+        campoEntrarEmail.placeholder = 'ex.: ana@gmail.com';
+        campoEntrarEmail.setAttribute('autocomplete', 'email');
+    }
 
     // =====================================================
     // 1B. JANELAS NOVAS (criadas aqui): código por e-mail e recuperar senha
@@ -533,31 +545,20 @@ document.addEventListener('DOMContentLoaded', () => {
     ligar(linkCodigoVoltar, 'click', (e) => { e.preventDefault(); abrirCadastro(); });
 
     // =====================================================
-    // 8. ENTRAR (Autenticação no Supabase)
+    // 8. ENTRAR (Autenticação no Supabase) - SÓ COM E-MAIL
     // =====================================================
     formEntrar.addEventListener('submit', async (e) => {
         e.preventDefault();
         erroEntrar.textContent = '';
         if (!supabaseClient) return;
 
-        const identificador = document.getElementById('entrar-identificador').value.trim().toLowerCase();
+        const emailParaLogin = document.getElementById('entrar-identificador').value.trim().toLowerCase();
         const senha = document.getElementById('entrar-senha').value;
 
-        let emailParaLogin = identificador;
-
-        // Se introduziu um nome de utilizador em vez de e-mail, tenta procurar o e-mail na tabela profiles
-        if (!emailValido(identificador)) {
-            const { data: profile } = await supabaseClient
-                .from('profiles')
-                .select('id')
-                .eq('nome', identificador)
-                .single();
-
-            if (!profile) {
-                erroEntrar.textContent = 'Utilizador não encontrado.';
-                return;
-            }
-            // Como o Supabase Auth usa email, se necessário podemos mapear pelo ID ou solicitar o e-mail
+        // O login por nome de utilizador está desativado: só se entra com o e-mail
+        if (!emailValido(emailParaLogin)) {
+            erroEntrar.textContent = 'Escreva o e-mail da sua conta.';
+            return;
         }
 
         const { data, error } = await supabaseClient.auth.signInWithPassword({
@@ -567,7 +568,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
         if (error) {
             // Conta criada mas o e-mail ainda não foi confirmado: manda um código novo
-            if (/not confirmed/i.test(error.message) && emailValido(emailParaLogin)) {
+            if (/not confirmed/i.test(error.message)) {
                 await supabaseClient.auth.resend({ type: 'signup', email: emailParaLogin });
                 formEntrar.reset();
                 abrirCodigo(emailParaLogin);

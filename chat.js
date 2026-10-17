@@ -1,7 +1,13 @@
 // =========================================================
 // LS SHOPPING - Contacto e chat do site (chat.js)
 // Versão Supabase Integrada e com Selo iOS
-// + Botão "Apagar conversa" (sem esperar os 7 dias)
+// + Mensagens em tempo real (Supabase Realtime)
+// + "Apagar conversa" só para quem apaga (a outra pessoa mantém a dela)
+// + Correção do ecrã do chat quando abre o teclado no telemóvel
+//
+// PRECISA desta coluna na tabela "mensagens" (correr uma vez no SQL Editor):
+//   alter table public.mensagens
+//     add column if not exists apagou_em jsonb not null default '{}'::jsonb;
 // =========================================================
 
 const supabaseChat = window.supabaseLS;
@@ -11,10 +17,17 @@ document.addEventListener('DOMContentLoaded', () => {
     const DIAS_HISTORICO = 7;
     const UM_DIA = 24 * 60 * 60 * 1000;
 
+    // Telemóvel/tablet (ecrã de toque)
+    const ecraDeToque = !!(window.matchMedia && window.matchMedia('(pointer: coarse)').matches);
+
     let conversaAtiva = null;
     let cacheConversas = [];
     let meuId = '';      // ID do utilizador no Supabase (identifica o vendedor)
     let meuNome = '';    // nome de utilizador (mostrado no chat)
+
+    // --- Tempo real ---
+    let canalRealtime = null;     // ligação em tempo real ao Supabase
+    let realtimeAtivo = false;    // true quando a ligação está estabelecida
 
     // Estilo do botão "Apagar" (fica aqui dentro, não é preciso mexer no style.css)
     const estiloApagar = document.createElement('style');
@@ -70,6 +83,35 @@ document.addEventListener('DOMContentLoaded', () => {
         return c.vendedorNome || 'Vendedor';
     }
 
+    // Converte uma linha da tabela "mensagens" no formato usado pelo chat.
+    // "antiga" (opcional) serve para não perder campos que o tempo real
+    // às vezes não envia quando não mudaram.
+    function mapearConversa(c, antiga) {
+        return {
+            id: c.id,
+            produtoId: c.produto_id,
+            produtoNome: c.produto_nome,
+            vendedor: c.vendedor,
+            vendedorNome: c.vendedor_nome || '',
+            comprador: c.comprador,
+            compradorNome: c.comprador_nome || '',
+            criadaEm: new Date(c.criada_em).getTime(),
+            atualizadaEm: new Date(c.atualizada_em).getTime(),
+            expiraEm: new Date(c.expira_em).getTime(),
+            mensagens: c.mensagens !== undefined ? (c.mensagens || []) : (antiga ? antiga.mensagens : []),
+            lidas: c.lidas !== undefined ? (c.lidas || {}) : (antiga ? antiga.lidas : {}),
+            // quando cada pessoa apagou a conversa só para si: { "email": timestamp }
+            apagouEm: c.apagou_em !== undefined ? (c.apagou_em || {}) : (antiga ? (antiga.apagouEm || {}) : {})
+        };
+    }
+
+    // Só as mensagens que EU ainda posso ver (as anteriores a quando apaguei ficam escondidas)
+    function mensagensVisiveis(c) {
+        const eu = usuarioAtual();
+        const corte = (c.apagouEm && c.apagouEm[eu]) || 0;
+        return corte ? c.mensagens.filter(m => m.em > corte) : c.mensagens;
+    }
+
     async function lerConversasSupabase() {
         if (!supabaseChat) return [];
         const eu = usuarioAtual();
@@ -87,20 +129,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if (error) console.error('chat.js: erro a ler as conversas:', error.message);
         if (error || !data) return [];
 
-        cacheConversas = data.map(c => ({
-            id: c.id,
-            produtoId: c.produto_id,
-            produtoNome: c.produto_nome,
-            vendedor: c.vendedor,
-            vendedorNome: c.vendedor_nome || '',
-            comprador: c.comprador,
-            compradorNome: c.comprador_nome || '',
-            criadaEm: new Date(c.criada_em).getTime(),
-            atualizadaEm: new Date(c.atualizada_em).getTime(),
-            expiraEm: new Date(c.expira_em).getTime(),
-            mensagens: c.mensagens || [],
-            lidas: c.lidas || {}
-        }));
+        cacheConversas = data.map(c => mapearConversa(c));
 
         return cacheConversas;
     }
@@ -128,7 +157,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     function naoLidas(c, eu) {
         const visto = (c.lidas && c.lidas[eu]) || 0;
-        return c.mensagens.filter(m => m.de !== eu && m.em > visto).length;
+        return mensagensVisiveis(c).filter(m => m.de !== eu && m.em > visto).length;
     }
 
     function totalNaoLidas(eu) {
@@ -207,7 +236,8 @@ document.addEventListener('DOMContentLoaded', () => {
                 atualizadaEm: agora.getTime(),
                 expiraEm: expira.getTime(),
                 mensagens: [],
-                lidas: {}
+                lidas: {},
+                apagouEm: {}
             };
             cacheConversas.unshift(c);
         }
@@ -250,13 +280,19 @@ document.addEventListener('DOMContentLoaded', () => {
         `;
     }
 
-    async function atualizarSelo() {
+    // Só desenha o número (usa o que já está na memória, não vai à base de dados)
+    function desenharSelo() {
         if (!selo) return;
-        await lerConversasSupabase();
         const eu = usuarioAtual();
         const n = eu ? totalNaoLidas(eu) : 0;
         selo.textContent = n > 9 ? '9+' : String(n);
         selo.style.display = n > 0 ? 'inline-flex' : 'none';
+    }
+
+    async function atualizarSelo() {
+        if (!selo) return;
+        await lerConversasSupabase();
+        desenharSelo();
     }
 
     window.abrirChatComVendedor = async function(prod) {
@@ -300,6 +336,47 @@ document.addEventListener('DOMContentLoaded', () => {
     `;
     document.body.appendChild(painel);
 
+    function painelAberto() {
+        return painel.classList.contains('aberta');
+    }
+
+    // =====================================================
+    // TECLADO NO TELEMÓVEL
+    // Quando o teclado abre, a parte visível do ecrã encolhe. Sem isto, o topo
+    // do chat podia ficar "empurrado" para a zona do teclado e da caixa de escrever.
+    // Aqui ajustamos o painel à área realmente visível.
+    // =====================================================
+    function ajustarAoTeclado() {
+        const vv = window.visualViewport;
+        if (!vv || !painelAberto()) return;
+
+        const tecladoAberto = (window.innerHeight - vv.height) > 80;
+        if (tecladoAberto || vv.offsetTop > 0) {
+            painel.style.height = vv.height + 'px';
+            painel.style.top = vv.offsetTop + 'px';
+            painel.style.bottom = 'auto';
+
+            // mantém a última mensagem visível por cima do teclado
+            if (tecladoAberto) {
+                const caixa = painel.querySelector('.msg-mensagens');
+                if (caixa) caixa.scrollTop = caixa.scrollHeight;
+            }
+        } else {
+            limparAjusteTeclado();
+        }
+    }
+
+    function limparAjusteTeclado() {
+        painel.style.height = '';
+        painel.style.top = '';
+        painel.style.bottom = '';
+    }
+
+    if (window.visualViewport) {
+        window.visualViewport.addEventListener('resize', ajustarAoTeclado);
+        window.visualViewport.addEventListener('scroll', ajustarAoTeclado);
+    }
+
     async function desenharLista() {
         const eu = usuarioAtual();
         const caixa = painel.querySelector('.msg-lista');
@@ -312,7 +389,7 @@ document.addEventListener('DOMContentLoaded', () => {
         caixa.innerHTML = '';
         const minhas = cacheConversas
             .filter(c => participo(c) &&
-                         (c.mensagens.length > 0 || c.id === conversaAtiva))
+                         (mensagensVisiveis(c).length > 0 || c.id === conversaAtiva))
             .sort((a, b) => (b.atualizadaEm || 0) - (a.atualizadaEm || 0));
 
         if (minhas.length === 0) {
@@ -325,7 +402,8 @@ document.addEventListener('DOMContentLoaded', () => {
 
         minhas.forEach(c => {
             const nome = nomeDoOutro(c);
-            const ultima = c.mensagens[c.mensagens.length - 1];
+            const visiveis = mensagensVisiveis(c);
+            const ultima = visiveis[visiveis.length - 1];
             const n = naoLidas(c, eu);
 
             const item = document.createElement('div');
@@ -362,24 +440,34 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
-    async function desenharMensagens() {
-        const caixa = painel.querySelector('.msg-mensagens');
-        if (!caixa || !conversaAtiva) return;
+    // forcar = true -> desce sempre até à última mensagem (usado ao enviar).
+    // Caso contrário, só desce se a pessoa já estava no fim da conversa,
+    // para não "saltar" quando ela está a ler mensagens antigas.
+    async function desenharMensagens(forcar) {
+        if (!conversaAtiva) return;
 
         await marcarLida(conversaAtiva);
+
+        const caixa = painel.querySelector('.msg-mensagens');
+        if (!caixa || !conversaAtiva) return;
         const c = cacheConversas.find(x => x.id === conversaAtiva);
         if (!c) return;
         const eu = usuarioAtual();
+        const visiveis = mensagensVisiveis(c);
+
+        const distanciaDoFim = caixa.scrollHeight - caixa.scrollTop - caixa.clientHeight;
+        const estavaNoFim = distanciaDoFim < 80;
+        const scrollAnterior = caixa.scrollTop;
 
         caixa.innerHTML = '';
-        if (c.mensagens.length === 0) {
+        if (visiveis.length === 0) {
             const vazio = document.createElement('p');
             vazio.className = 'msg-sem-mensagens';
             vazio.textContent = 'Ainda não há mensagens. Escreva a primeira!';
             caixa.appendChild(vazio);
         }
 
-        c.mensagens.forEach(m => {
+        visiveis.forEach(m => {
             const bolha = document.createElement('div');
             bolha.className = 'msg-bolha ' + (m.de === eu ? 'minha' : 'dele');
             const texto = document.createElement('span');
@@ -393,18 +481,33 @@ document.addEventListener('DOMContentLoaded', () => {
             caixa.appendChild(bolha);
         });
 
-        caixa.scrollTop = caixa.scrollHeight;
+        if (forcar || estavaNoFim) {
+            caixa.scrollTop = caixa.scrollHeight;
+        } else {
+            caixa.scrollTop = scrollAnterior;
+        }
     }
 
     // =====================================================
-    // APAGAR CONVERSA (sem esperar os 7 dias)
+    // APAGAR CONVERSA - só para quem apaga
+    // A outra pessoa continua a ver as mensagens dela.
+    // Se a outra pessoa escrever outra vez, a conversa volta a aparecer
+    // (só com as mensagens novas). Passados os 7 dias a conversa é
+    // eliminada de vez para os dois lados.
     // =====================================================
+    function faltaColunaApagou(erro) {
+        return !!erro && /apagou_em/i.test(String(erro.message || ''));
+    }
+
+    const AVISO_COLUNA = 'Falta criar a coluna "apagou_em" na tabela "mensagens" do Supabase. ' +
+        'Corra no SQL Editor: alter table public.mensagens add column if not exists apagou_em jsonb not null default \'{}\'::jsonb;';
+
     async function apagarConversa(id) {
         const c = cacheConversas.find(x => x.id === id);
         if (!c) return;
 
         const aviso = 'Tem a certeza que quer apagar esta conversa?\n' +
-                      'As mensagens serão eliminadas para os dois lados e não poderão ser recuperadas.';
+                      'Ela desaparece só para si. A outra pessoa continua a ver as mensagens dela.';
         let confirmado;
         if (typeof window.confirmar === 'function') {
             confirmado = await window.confirmar(aviso, {
@@ -418,30 +521,62 @@ document.addEventListener('DOMContentLoaded', () => {
         }
         if (!confirmado) return;
 
+        const eu = usuarioAtual();
+        const agora = Date.now();
+        let apagouNovo = Object.assign({}, c.apagouEm || {}, { [eu]: agora });
+
         if (supabaseChat) {
-            // .select() devolve as linhas apagadas: se vier vazio, a base de dados bloqueou
+            // Vai buscar o estado mais recente (para não apagar a marca da outra pessoa)
+            const { data: atual, error: erroLer } = await supabaseChat
+                .from('mensagens')
+                .select('apagou_em')
+                .eq('id', id)
+                .maybeSingle();
+
+            if (erroLer) {
+                alert(faltaColunaApagou(erroLer)
+                    ? AVISO_COLUNA
+                    : 'Não foi possível apagar a conversa: ' + erroLer.message);
+                return;
+            }
+
+            if (!atual) {
+                // A conversa já não existe (por exemplo, expirou): só limpa da memória
+                cacheConversas = cacheConversas.filter(x => x.id !== id);
+                conversaAtiva = null;
+                painel.classList.remove('ver-conversa');
+                await mostrarConversa(null);
+                await atualizarSelo();
+                return;
+            }
+
+            apagouNovo = Object.assign({}, atual.apagou_em || {}, { [eu]: agora });
+
+            // .select() devolve as linhas alteradas: se vier vazio, a base de dados bloqueou
             const { data, error } = await supabaseChat
                 .from('mensagens')
-                .delete()
+                .update({ apagou_em: apagouNovo })
                 .eq('id', id)
-                .select();
+                .select('id');
 
             if (error) {
-                alert('Não foi possível apagar a conversa: ' + error.message);
+                alert(faltaColunaApagou(error)
+                    ? AVISO_COLUNA
+                    : 'Não foi possível apagar a conversa: ' + error.message);
                 return;
             }
             if (!data || data.length === 0) {
-                alert('Não foi possível apagar a conversa. Verifique a permissão de apagar (DELETE) na tabela "mensagens" do Supabase.');
+                alert('Não foi possível apagar a conversa. Verifique a permissão de alterar (UPDATE) na tabela "mensagens" do Supabase.');
                 return;
             }
         }
 
-        cacheConversas = cacheConversas.filter(x => x.id !== id);
+        c.apagouEm = apagouNovo;
         conversaAtiva = null;
         painel.classList.remove('ver-conversa');
         await mostrarConversa(null);
         await atualizarSelo();
-        alert('Conversa apagada com sucesso.');
+        alert('Conversa apagada para si.');
     }
 
     async function mostrarConversa(id) {
@@ -503,9 +638,17 @@ document.addEventListener('DOMContentLoaded', () => {
         }
         input.addEventListener('input', ajustarAltura);
 
+        // Quando se toca na caixa de escrever no telemóvel, o teclado abre.
+        // Garante que o ecrã fica certo e a última mensagem visível.
+        input.addEventListener('focus', () => {
+            setTimeout(() => {
+                window.scrollTo(0, 0);
+                ajustarAoTeclado();
+            }, 300);
+        });
+
         // No telemóvel o Enter muda de linha (envia-se com o botão "Enviar").
         // No computador o Enter envia e Shift+Enter muda de linha.
-        const ecraDeToque = !!(window.matchMedia && window.matchMedia('(pointer: coarse)').matches);
         input.addEventListener('keydown', (e) => {
             if (e.key === 'Enter' && !e.shiftKey && !e.isComposing && !ecraDeToque) {
                 e.preventDefault();
@@ -521,51 +664,188 @@ document.addEventListener('DOMContentLoaded', () => {
             input.value = '';
             ajustarAltura();
             input.focus();   // o teclado do telemóvel fica aberto para a mensagem seguinte
-            await enviar(texto);
+            const enviou = await enviar(texto);
+            // Se falhou, devolve o texto à caixa para a pessoa não o perder
+            if (!enviou && !input.value) {
+                input.value = texto;
+                ajustarAltura();
+            }
         });
 
-        await desenharMensagens();
+        await desenharMensagens(true);
         await desenharLista();
         await atualizarSelo();
-        input.focus();
+
+        // No computador abre logo com o cursor na caixa. No telemóvel NÃO:
+        // abrir o teclado sozinho é o que desarrumava o ecrã ao abrir o chat.
+        if (!ecraDeToque) input.focus();
     }
 
+    // Devolve true se a mensagem foi enviada, false se falhou
     async function enviar(texto) {
         const eu = usuarioAtual();
         const c = cacheConversas.find(x => x.id === conversaAtiva);
         if (!c || !eu) {
             alert('Esta conversa já não existe.');
-            return;
+            return false;
         }
 
         const agora = Date.now();
         const novaMsg = { de: eu, texto: texto, em: agora };
-        c.mensagens.push(novaMsg);
-        c.atualizadaEm = agora;
-        c.expiraEm = agora + DIAS_HISTORICO * UM_DIA;
-        c.lidas = c.lidas || {};
-        c.lidas[eu] = agora;
+
+        // Vai buscar a versão mais recente da conversa antes de acrescentar,
+        // para nunca apagar uma mensagem que a outra pessoa acabou de enviar.
+        let mensagensBase = c.mensagens;
+        let lidasBase = c.lidas || {};
+        if (supabaseChat) {
+            const { data: atual } = await supabaseChat
+                .from('mensagens')
+                .select('mensagens, lidas')
+                .eq('id', c.id)
+                .maybeSingle();
+            if (atual) {
+                mensagensBase = atual.mensagens || [];
+                lidasBase = atual.lidas || {};
+            }
+        }
+
+        const listaNova = mensagensBase.concat([novaMsg]);
+        const lidasNovas = Object.assign({}, lidasBase, { [eu]: agora });
+        const expiraNova = agora + DIAS_HISTORICO * UM_DIA;
 
         if (supabaseChat) {
             const { error } = await supabaseChat
                 .from('mensagens')
                 .update({
-                    mensagens: c.mensagens,
-                    atualizada_em: new Date(c.atualizadaEm).toISOString(),
-                    expira_em: new Date(c.expiraEm).toISOString(),
-                    lidas: c.lidas
+                    mensagens: listaNova,
+                    atualizada_em: new Date(agora).toISOString(),
+                    expira_em: new Date(expiraNova).toISOString(),
+                    lidas: lidasNovas
                 })
                 .eq('id', c.id);
 
             if (error) {
                 alert('Não foi possível enviar a mensagem: ' + error.message);
-                return;
+                return false;
             }
         }
 
-        await desenharMensagens();
+        // Atualiza a memória (a conversa pode ter sido substituída pelo tempo real)
+        const atualC = cacheConversas.find(x => x.id === c.id) || c;
+        atualC.mensagens = listaNova;
+        atualC.atualizadaEm = agora;
+        atualC.expiraEm = expiraNova;
+        atualC.lidas = lidasNovas;
+
+        await desenharMensagens(true);
         await desenharLista();
+        return true;
     }
+
+    // =====================================================
+    // TEMPO REAL: mensagens que chegam aparecem na hora
+    // =====================================================
+    async function aoReceberAlteracao(payload) {
+        const eu = usuarioAtual();
+        if (!eu || !payload) return;
+
+        // Conversa eliminada de vez (por expirar os 7 dias)
+        if (payload.eventType === 'DELETE') {
+            const idApagado = payload.old && payload.old.id;
+            if (!idApagado) return;
+            const existia = cacheConversas.some(x => x.id === idApagado);
+            if (!existia) return;
+
+            cacheConversas = cacheConversas.filter(x => x.id !== idApagado);
+            desenharSelo();
+
+            if (conversaAtiva === idApagado) {
+                conversaAtiva = null;
+                painel.classList.remove('ver-conversa');
+                await mostrarConversa(null);
+            } else if (painelAberto()) {
+                await desenharLista();
+            }
+            return;
+        }
+
+        // Conversa nova ou atualizada (nova mensagem, mensagem lida, apagada, etc.)
+        const linha = payload.new;
+        if (!linha || !linha.id) return;
+
+        const posicao = cacheConversas.findIndex(x => x.id === linha.id);
+        const antiga = posicao >= 0 ? cacheConversas[posicao] : null;
+        const nova = mapearConversa(linha, antiga);
+
+        // Só interessa se a conversa é minha (RLS já filtra, isto é uma segunda barreira)
+        if (!participo(nova)) return;
+
+        if (posicao >= 0) cacheConversas[posicao] = nova;
+        else cacheConversas.unshift(nova);
+
+        // Se estou a ver esta conversa, mostra a mensagem nova (e marca como lida)
+        if (painelAberto() && conversaAtiva === nova.id) {
+            await desenharMensagens();
+        }
+
+        desenharSelo();
+
+        if (painelAberto()) {
+            await desenharLista();
+        }
+    }
+
+    function pararRealtime() {
+        realtimeAtivo = false;
+        if (canalRealtime && supabaseChat) {
+            try { supabaseChat.removeChannel(canalRealtime); } catch (e) { /* ignora */ }
+        }
+        canalRealtime = null;
+    }
+
+    function iniciarRealtime() {
+        pararRealtime();
+        if (!supabaseChat || !usuarioAtual()) return;
+
+        canalRealtime = supabaseChat
+            .channel('ls-chat-' + (meuId || nomeDe(usuarioAtual())))
+            .on(
+                'postgres_changes',
+                { event: '*', schema: 'public', table: 'mensagens' },
+                (payload) => {
+                    aoReceberAlteracao(payload).catch(err =>
+                        console.error('chat.js: erro no tempo real:', err));
+                }
+            )
+            .subscribe((estado) => {
+                realtimeAtivo = (estado === 'SUBSCRIBED');
+                if (estado === 'CHANNEL_ERROR' || estado === 'TIMED_OUT') {
+                    console.error('chat.js: o tempo real não ligou (' + estado + '). ' +
+                        'Verifique se o Realtime está ativo na tabela "mensagens" no Supabase.');
+                }
+            });
+    }
+
+    // Rede de segurança: se o tempo real não estiver ligado, atualiza a cada 8 segundos
+    setInterval(async () => {
+        if (realtimeAtivo || !usuarioAtual() || document.hidden) return;
+        await atualizarSelo();
+        if (painelAberto()) {
+            if (conversaAtiva) await desenharMensagens();
+            await desenharLista();
+        }
+    }, 8000);
+
+    // Quando a pessoa volta ao separador/aplicação (telemóvel bloqueado, outro separador),
+    // sincroniza o que possa ter chegado entretanto.
+    document.addEventListener('visibilitychange', async () => {
+        if (document.hidden || !usuarioAtual()) return;
+        await atualizarSelo();
+        if (painelAberto()) {
+            if (conversaAtiva) await desenharMensagens();
+            await desenharLista();
+        }
+    });
 
     async function abrirMensagens(id) {
         if (!usuarioAtual()) {
@@ -575,6 +855,10 @@ document.addEventListener('DOMContentLoaded', () => {
         await limparExpiradas();
         painel.classList.add('aberta');
         document.body.classList.add('sem-scroll');
+
+        // Começa sempre com a página no topo e o painel ajustado ao ecrã visível
+        window.scrollTo(0, 0);
+        ajustarAoTeclado();
 
         if (id) {
             await mostrarConversa(id);
@@ -589,6 +873,7 @@ document.addEventListener('DOMContentLoaded', () => {
         painel.classList.remove('aberta');
         painel.classList.remove('ver-conversa');
         document.body.classList.remove('sem-scroll');
+        limparAjusteTeclado();
         conversaAtiva = null;
         atualizarSelo();
     }
@@ -603,14 +888,17 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 
     window.addEventListener('ls:sessao', async () => {
+        cacheConversas = [];
         await carregarMeuId();
         fecharMensagens();
         await atualizarSelo();
+        iniciarRealtime();   // religa (ou desliga, se saiu da conta) com o utilizador certo
     });
 
     (async () => {
         await carregarMeuId();
         await limparExpiradas();
         await atualizarSelo();
+        iniciarRealtime();
     })();
 });
