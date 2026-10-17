@@ -3,7 +3,6 @@
 // Versão Supabase Integrada e com Selo iOS
 // + Mensagens em tempo real (Supabase Realtime)
 // + "Apagar conversa" só para quem apaga (a outra pessoa mantém a dela)
-// + Correção do ecrã do chat quando abre o teclado no telemóvel
 //
 // PRECISA desta coluna na tabela "mensagens" (correr uma vez no SQL Editor):
 //   alter table public.mensagens
@@ -340,43 +339,6 @@ document.addEventListener('DOMContentLoaded', () => {
         return painel.classList.contains('aberta');
     }
 
-    // =====================================================
-    // TECLADO NO TELEMÓVEL
-    // Quando o teclado abre, a parte visível do ecrã encolhe. Sem isto, o topo
-    // do chat podia ficar "empurrado" para a zona do teclado e da caixa de escrever.
-    // Aqui ajustamos o painel à área realmente visível.
-    // =====================================================
-    function ajustarAoTeclado() {
-        const vv = window.visualViewport;
-        if (!vv || !painelAberto()) return;
-
-        const tecladoAberto = (window.innerHeight - vv.height) > 80;
-        if (tecladoAberto || vv.offsetTop > 0) {
-            painel.style.height = vv.height + 'px';
-            painel.style.top = vv.offsetTop + 'px';
-            painel.style.bottom = 'auto';
-
-            // mantém a última mensagem visível por cima do teclado
-            if (tecladoAberto) {
-                const caixa = painel.querySelector('.msg-mensagens');
-                if (caixa) caixa.scrollTop = caixa.scrollHeight;
-            }
-        } else {
-            limparAjusteTeclado();
-        }
-    }
-
-    function limparAjusteTeclado() {
-        painel.style.height = '';
-        painel.style.top = '';
-        painel.style.bottom = '';
-    }
-
-    if (window.visualViewport) {
-        window.visualViewport.addEventListener('resize', ajustarAoTeclado);
-        window.visualViewport.addEventListener('scroll', ajustarAoTeclado);
-    }
-
     async function desenharLista() {
         const eu = usuarioAtual();
         const caixa = painel.querySelector('.msg-lista');
@@ -638,15 +600,6 @@ document.addEventListener('DOMContentLoaded', () => {
         }
         input.addEventListener('input', ajustarAltura);
 
-        // Quando se toca na caixa de escrever no telemóvel, o teclado abre.
-        // Garante que o ecrã fica certo e a última mensagem visível.
-        input.addEventListener('focus', () => {
-            setTimeout(() => {
-                window.scrollTo(0, 0);
-                ajustarAoTeclado();
-            }, 300);
-        });
-
         // No telemóvel o Enter muda de linha (envia-se com o botão "Enviar").
         // No computador o Enter envia e Shift+Enter muda de linha.
         input.addEventListener('keydown', (e) => {
@@ -676,9 +629,7 @@ document.addEventListener('DOMContentLoaded', () => {
         await desenharLista();
         await atualizarSelo();
 
-        // No computador abre logo com o cursor na caixa. No telemóvel NÃO:
-        // abrir o teclado sozinho é o que desarrumava o ecrã ao abrir o chat.
-        if (!ecraDeToque) input.focus();
+        input.focus();
     }
 
     // Devolve true se a mensagem foi enviada, false se falhou
@@ -856,10 +807,6 @@ document.addEventListener('DOMContentLoaded', () => {
         painel.classList.add('aberta');
         document.body.classList.add('sem-scroll');
 
-        // Começa sempre com a página no topo e o painel ajustado ao ecrã visível
-        window.scrollTo(0, 0);
-        ajustarAoTeclado();
-
         if (id) {
             await mostrarConversa(id);
             painel.classList.add('ver-conversa');
@@ -873,7 +820,6 @@ document.addEventListener('DOMContentLoaded', () => {
         painel.classList.remove('aberta');
         painel.classList.remove('ver-conversa');
         document.body.classList.remove('sem-scroll');
-        limparAjusteTeclado();
         conversaAtiva = null;
         atualizarSelo();
     }
