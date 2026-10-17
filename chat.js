@@ -1,12 +1,13 @@
 // =========================================================
-// LS SHOPPING - Contacto e chat do site (chat.js)
-// Versão Supabase Integrada e com Selo iOS
-// + Mensagens em tempo real (Supabase Realtime)
-// + "Apagar conversa" só para quem apaga (a outra pessoa mantém a dela)
+// LS SHOPPING - Chat do site (chat.js)
 //
-// PRECISA desta coluna na tabela "mensagens" (correr uma vez no SQL Editor):
-//   alter table public.mensagens
-//     add column if not exists apagou_em jsonb not null default '{}'::jsonb;
+// - Cada mensagem é uma linha própria na base de dados (já não se perdem
+//   mensagens quando duas pessoas escrevem ao mesmo tempo).
+// - Tempo real: as mensagens aparecem sem recarregar a página
+//   (se o tempo real falhar, atualiza sozinho de 15 em 15 segundos).
+// - Selo de mensagens não lidas, apagar conversa e histórico de 7 dias.
+//
+// Precisa de ter corrido o ficheiro supabase-setup.sql no Supabase.
 // =========================================================
 
 const supabaseChat = window.supabaseLS;
@@ -14,123 +15,43 @@ const supabaseChat = window.supabaseLS;
 document.addEventListener('DOMContentLoaded', () => {
 
     const DIAS_HISTORICO = 7;
-    const UM_DIA = 24 * 60 * 60 * 1000;
+    const MAX_MENSAGENS = 200;          // mensagens mostradas por conversa
+    const TITULO_ORIGINAL = document.title;
 
-    // Telemóvel/tablet (ecrã de toque)
-    const ecraDeToque = !!(window.matchMedia && window.matchMedia('(pointer: coarse)').matches);
+    let meuId = '';                     // ID da pessoa com sessão (Supabase)
+    let meuNome = '';                   // nome mostrado no chat
+    let conversas = [];                 // as minhas conversas
+    let conversaAtiva = null;           // id da conversa aberta
+    let mensagens = [];                 // mensagens da conversa aberta
+    let canal = null;                   // ligação em tempo real
+    let tempoRealOk = false;
+    let timerAtualizacao = null;
 
-    let conversaAtiva = null;
-    let cacheConversas = [];
-    let meuId = '';      // ID do utilizador no Supabase (identifica o vendedor)
-    let meuNome = '';    // nome de utilizador (mostrado no chat)
-
-    // --- Tempo real ---
-    let canalRealtime = null;     // ligação em tempo real ao Supabase
-    let realtimeAtivo = false;    // true quando a ligação está estabelecida
-
-    // Estilo do botão "Apagar" (fica aqui dentro, não é preciso mexer no style.css)
-    const estiloApagar = document.createElement('style');
-    estiloApagar.textContent = `
+    // Estilos extra (ficam aqui dentro: não é preciso mexer no style.css)
+    const estiloChat = document.createElement('style');
+    estiloChat.textContent = `
         .msg-conv-apagar {
-            margin-left: auto;
-            flex: none;
-            background: none;
-            border: 1px solid #c62828;
-            color: #c62828;
-            border-radius: 8px;
-            padding: 6px 12px;
-            font-size: 13px;
-            font-weight: 600;
-            cursor: pointer;
+            margin-left: auto; flex: none; background: none;
+            border: 1px solid #c62828; color: #c62828; border-radius: 8px;
+            padding: 6px 12px; font-size: 13px; font-weight: 600; cursor: pointer;
         }
         .msg-conv-apagar:hover { background: #c62828; color: #fff; }
-    `;
-    document.head.appendChild(estiloApagar);
-
-    function usuarioAtual() {
-        return localStorage.getItem('ls_sessao') || localStorage.getItem('ls_usuario') || '';
-    }
-
-    function nomeDe(email) {
-        return String(email || '').split('@')[0];
-    }
-
-    // Vai buscar o ID e o nome do utilizador com sessão no Supabase
-    async function carregarMeuId() {
-        meuId = '';
-        meuNome = '';
-        if (!supabaseChat) return;
-        const { data } = await supabaseChat.auth.getSession();
-        if (data && data.session && data.session.user) {
-            const u = data.session.user;
-            meuId = u.id;
-            meuNome = (u.user_metadata && u.user_metadata.nome) || nomeDe(u.email);
+        .msg-dia {
+            align-self: center; font-size: 11px; color: #667085; background: #e8ecf5;
+            border-radius: 10px; padding: 3px 10px; margin: 6px 0;
         }
-    }
+        .msg-bolha.pendente { opacity: .6; }
+        .msg-bolha.falhou { background: #fdecea; color: #8a1c1c; border: 1px solid #f5c2c0; cursor: pointer; }
+        .msg-bolha.falhou small { opacity: 1; font-weight: 600; }
+    `;
+    document.head.appendChild(estiloChat);
 
-    // O vendedor é guardado pelo ID; o comprador pelo e-mail
-    function souVendedor(c) {
-        return !!meuId && c.vendedor === meuId;
-    }
-
-    function participo(c) {
-        return c.comprador === usuarioAtual() || souVendedor(c);
-    }
-
-    function nomeDoOutro(c) {
-        if (souVendedor(c)) return c.compradorNome || nomeDe(c.comprador);
-        return c.vendedorNome || 'Vendedor';
-    }
-
-    // Converte uma linha da tabela "mensagens" no formato usado pelo chat.
-    // "antiga" (opcional) serve para não perder campos que o tempo real
-    // às vezes não envia quando não mudaram.
-    function mapearConversa(c, antiga) {
-        return {
-            id: c.id,
-            produtoId: c.produto_id,
-            produtoNome: c.produto_nome,
-            vendedor: c.vendedor,
-            vendedorNome: c.vendedor_nome || '',
-            comprador: c.comprador,
-            compradorNome: c.comprador_nome || '',
-            criadaEm: new Date(c.criada_em).getTime(),
-            atualizadaEm: new Date(c.atualizada_em).getTime(),
-            expiraEm: new Date(c.expira_em).getTime(),
-            mensagens: c.mensagens !== undefined ? (c.mensagens || []) : (antiga ? antiga.mensagens : []),
-            lidas: c.lidas !== undefined ? (c.lidas || {}) : (antiga ? antiga.lidas : {}),
-            // quando cada pessoa apagou a conversa só para si: { "email": timestamp }
-            apagouEm: c.apagou_em !== undefined ? (c.apagou_em || {}) : (antiga ? (antiga.apagouEm || {}) : {})
-        };
-    }
-
-    // Só as mensagens que EU ainda posso ver (as anteriores a quando apaguei ficam escondidas)
-    function mensagensVisiveis(c) {
-        const eu = usuarioAtual();
-        const corte = (c.apagouEm && c.apagouEm[eu]) || 0;
-        return corte ? c.mensagens.filter(m => m.em > corte) : c.mensagens;
-    }
-
-    async function lerConversasSupabase() {
-        if (!supabaseChat) return [];
-        const eu = usuarioAtual();
-        if (!eu) return [];
-
-        let filtro = `comprador.eq.${eu}`;
-        if (meuId) filtro += `,vendedor.eq.${meuId}`;
-
-        const { data, error } = await supabaseChat
-            .from('mensagens')
-            .select('*')
-            .or(filtro)
-            .order('atualizada_em', { ascending: false });
-
-        if (error) console.error('chat.js: erro a ler as conversas:', error.message);
-        if (error || !data) return [];
-
-        cacheConversas = data.map(c => mapearConversa(c));
-
-        return cacheConversas;
+    // ---------------------------------------------------------
+    // Funções pequenas de ajuda
+    // ---------------------------------------------------------
+    function notificar(mensagem, tipo) {
+        if (window.avisar) window.avisar(mensagem, tipo);
+        else alert(mensagem);
     }
 
     function clicar(id) {
@@ -138,117 +59,120 @@ document.addEventListener('DOMContentLoaded', () => {
         if (el) el.click();
     }
 
+    function nomeDe(email) {
+        return String(email || '').split('@')[0];
+    }
+
+    function hora(ts) {
+        const d = new Date(ts);
+        return String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0');
+    }
+
     function formatarHora(ts) {
         const d = new Date(ts);
-        const hh = String(d.getHours()).padStart(2, '0');
-        const mm = String(d.getMinutes()).padStart(2, '0');
-        if (d.toDateString() === new Date().toDateString()) return hh + ':' + mm;
-        const dia = String(d.getDate()).padStart(2, '0');
-        const mes = String(d.getMonth() + 1).padStart(2, '0');
-        return dia + '/' + mes + ' ' + hh + ':' + mm;
+        if (d.toDateString() === new Date().toDateString()) return hora(ts);
+        return String(d.getDate()).padStart(2, '0') + '/' + String(d.getMonth() + 1).padStart(2, '0') + ' ' + hora(ts);
     }
 
+    function nomeDoDia(ts) {
+        const d = new Date(ts);
+        const hoje = new Date();
+        const ontem = new Date();
+        ontem.setDate(hoje.getDate() - 1);
+        if (d.toDateString() === hoje.toDateString()) return 'Hoje';
+        if (d.toDateString() === ontem.toDateString()) return 'Ontem';
+        return String(d.getDate()).padStart(2, '0') + '/' + String(d.getMonth() + 1).padStart(2, '0') + '/' + d.getFullYear();
+    }
+
+    // Vai buscar o ID e o nome da pessoa com sessão
+    async function carregarMeuId() {
+        meuId = '';
+        meuNome = '';
+        if (!supabaseChat) return false;
+        const { data } = await supabaseChat.auth.getSession();
+        if (data && data.session && data.session.user) {
+            const u = data.session.user;
+            meuId = u.id;
+            meuNome = (u.user_metadata && u.user_metadata.nome) || nomeDe(u.email);
+        }
+        return !!meuId;
+    }
+
+    async function garantirSessao() {
+        if (meuId) return true;
+        return carregarMeuId();
+    }
+
+    // ---------------------------------------------------------
+    // Ler conversas e mensagens
+    // ---------------------------------------------------------
+    function mapearConversa(c) {
+        const souVendedor = c.vendedor_id === meuId;
+        return {
+            id: c.id,
+            produtoNome: c.produto_nome || '',
+            nomeOutro: souVendedor ? (c.comprador_nome || 'Cliente') : (c.vendedor_nome || 'Vendedor'),
+            atualizadaEm: new Date(c.atualizada_em).getTime(),
+            ultimaMensagem: c.ultima_mensagem || '',
+            ultimaDe: c.ultima_de || '',
+            ultimaEm: c.ultima_em ? new Date(c.ultima_em).getTime() : 0,
+            naoLidas: (souVendedor ? c.vendedor_nao_lidas : c.comprador_nao_lidas) || 0
+        };
+    }
+
+    function mapearMensagem(m) {
+        return { id: m.id, de: m.de_id, texto: m.texto, em: new Date(m.criada_em).getTime(), estado: '' };
+    }
+
+    async function carregarConversas() {
+        if (!supabaseChat || !meuId) {
+            conversas = [];
+            return conversas;
+        }
+        const { data, error } = await supabaseChat
+            .from('chat_conversas')
+            .select('*')
+            .order('atualizada_em', { ascending: false });
+
+        if (error) {
+            console.error('chat.js: erro a ler as conversas:', error.message);
+            return conversas;
+        }
+        conversas = (data || []).map(mapearConversa);
+        return conversas;
+    }
+
+    async function carregarMensagens(id) {
+        const { data, error } = await supabaseChat
+            .from('chat_mensagens')
+            .select('id,de_id,texto,criada_em')
+            .eq('conversa_id', id)
+            .order('id', { ascending: false })
+            .limit(MAX_MENSAGENS);
+
+        if (error) {
+            console.error('chat.js: erro a ler as mensagens:', error.message);
+            return null;
+        }
+        return (data || []).reverse().map(mapearMensagem);
+    }
+
+    // Apaga as minhas conversas que já passaram os 7 dias
     async function limparExpiradas() {
-        if (!supabaseChat) return;
-        const agora = new Date().toISOString();
-        await supabaseChat.from('mensagens').delete().lt('expira_em', agora);
+        if (!supabaseChat || !meuId) return;
+        await supabaseChat.from('chat_conversas').delete().lt('expira_em', new Date().toISOString());
     }
 
-    function naoLidas(c, eu) {
-        const visto = (c.lidas && c.lidas[eu]) || 0;
-        return mensagensVisiveis(c).filter(m => m.de !== eu && m.em > visto).length;
+    function totalNaoLidas() {
+        return conversas.reduce((soma, c) => soma + c.naoLidas, 0);
     }
 
-    function totalNaoLidas(eu) {
-        return cacheConversas
-            .filter(c => participo(c))
-            .reduce((soma, c) => soma + naoLidas(c, eu), 0);
-    }
-
-    async function marcarLida(idConversa) {
-        const eu = usuarioAtual();
-        const c = cacheConversas.find(x => x.id === idConversa);
-        if (!c) return;
-        const ultimaDoOutro = c.mensagens.reduce(
-            (max, m) => (m.de !== eu && m.em > max) ? m.em : max, 0
-        );
-        const visto = (c.lidas && c.lidas[eu]) || 0;
-        if (ultimaDoOutro <= visto) return;
-        
-        c.lidas = c.lidas || {};
-        c.lidas[eu] = Date.now();
-
-        if (supabaseChat) {
-            await supabaseChat
-                .from('mensagens')
-                .update({ lidas: c.lidas })
-                .eq('id', idConversa);
-        }
-    }
-
-    // Criar ou obter conversa
-    async function obterConversa(prod, comprador, donoProd) {
-        const idConv = 'p' + prod.id + '_' + comprador;
-
-        // Atualiza a lista antes, para nunca apagar uma conversa que já existe
-        await lerConversasSupabase();
-
-        let c = cacheConversas.find(x => x.id === idConv);
-        if (!c) {
-            const agora = new Date();
-            const expira = new Date(agora.getTime() + DIAS_HISTORICO * UM_DIA);
-
-            const novaConv = {
-                id: idConv,
-                produto_id: String(prod.id),
-                produto_nome: prod.nome || prod.titulo,
-                vendedor: donoProd,
-                vendedor_nome: prod.donoNome || '',
-                comprador: comprador,
-                comprador_nome: meuNome,
-                criada_em: agora.toISOString(),
-                atualizada_em: agora.toISOString(),
-                expira_em: expira.toISOString(),
-                mensagens: [],
-                lidas: {}
-            };
-
-            if (supabaseChat) {
-                const { error } = await supabaseChat
-                    .from('mensagens')
-                    .upsert([novaConv], { onConflict: 'id', ignoreDuplicates: true });
-                if (error) {
-                    alert('Não foi possível iniciar a conversa: ' + error.message);
-                    return null;
-                }
-            }
-
-            c = {
-                id: idConv,
-                produtoId: prod.id,
-                produtoNome: prod.nome || prod.titulo,
-                vendedor: donoProd,
-                vendedorNome: prod.donoNome || '',
-                comprador: comprador,
-                compradorNome: meuNome,
-                criadaEm: agora.getTime(),
-                atualizadaEm: agora.getTime(),
-                expiraEm: expira.getTime(),
-                mensagens: [],
-                lidas: {},
-                apagouEm: {}
-            };
-            cacheConversas.unshift(c);
-        }
-        return c;
-    }
-
-    // =====================================================
-    // SELO DE MENSAGENS NO TOPO
-    // =====================================================
+    // ---------------------------------------------------------
+    // Selo de mensagens no topo
+    // ---------------------------------------------------------
     const btnChatTopo = document.getElementById('btn-abrir-chat');
     let selo = null;
-    
+
     if (btnChatTopo) {
         selo = btnChatTopo.querySelector('.chat-selo');
         if (!selo) {
@@ -279,48 +203,18 @@ document.addEventListener('DOMContentLoaded', () => {
         `;
     }
 
-    // Só desenha o número (usa o que já está na memória, não vai à base de dados)
-    function desenharSelo() {
-        if (!selo) return;
-        const eu = usuarioAtual();
-        const n = eu ? totalNaoLidas(eu) : 0;
-        selo.textContent = n > 9 ? '9+' : String(n);
-        selo.style.display = n > 0 ? 'inline-flex' : 'none';
+    function atualizarSelo() {
+        const n = meuId ? totalNaoLidas() : 0;
+        if (selo) {
+            selo.textContent = n > 9 ? '9+' : String(n);
+            selo.style.display = n > 0 ? 'inline-flex' : 'none';
+        }
+        document.title = (n > 0 ? '(' + (n > 9 ? '9+' : n) + ') ' : '') + TITULO_ORIGINAL;
     }
 
-    async function atualizarSelo() {
-        if (!selo) return;
-        await lerConversasSupabase();
-        desenharSelo();
-    }
-
-    window.abrirChatComVendedor = async function(prod) {
-        const eu = usuarioAtual();
-        if (!eu) {
-            clicar('btn-abrir-login');
-            return;
-        }
-
-        if (!meuId) await carregarMeuId();
-
-        const donoProd = prod.dono || prod.user_id;
-        if (!donoProd) {
-            alert('Este anúncio não tem chat disponível. Use o WhatsApp.');
-            return;
-        }
-        if (donoProd === meuId || donoProd === eu) {
-            alert('Este anúncio é seu. Para testar o chat, entre com outra conta.');
-            return;
-        }
-
-        const conversa = await obterConversa(prod, eu, donoProd);
-        if (!conversa) return;
-        abrirMensagens(conversa.id);
-    };
-
-    // =====================================================
-    // O PAINEL DO MESSENGER
-    // =====================================================
+    // ---------------------------------------------------------
+    // O painel do Messenger
+    // ---------------------------------------------------------
     const painel = document.createElement('div');
     painel.className = 'msg-painel';
     painel.innerHTML = `
@@ -339,22 +233,17 @@ document.addEventListener('DOMContentLoaded', () => {
         return painel.classList.contains('aberta');
     }
 
-    async function desenharLista() {
-        const eu = usuarioAtual();
+    // A lista da esquerda (usa as conversas que já temos em memória)
+    function desenharLista() {
         const caixa = painel.querySelector('.msg-lista');
         if (!caixa) return;
-        if (!caixa.children.length) {
-            caixa.innerHTML = '<p class="msg-lista-vazia">A carregar conversas...</p>';
-        }
-
-        await lerConversasSupabase();
         caixa.innerHTML = '';
-        const minhas = cacheConversas
-            .filter(c => participo(c) &&
-                         (mensagensVisiveis(c).length > 0 || c.id === conversaAtiva))
-            .sort((a, b) => (b.atualizadaEm || 0) - (a.atualizadaEm || 0));
 
-        if (minhas.length === 0) {
+        const visiveis = conversas
+            .filter(c => c.ultimaMensagem || c.id === conversaAtiva)
+            .sort((a, b) => b.atualizadaEm - a.atualizadaEm);
+
+        if (visiveis.length === 0) {
             const vazio = document.createElement('p');
             vazio.className = 'msg-lista-vazia';
             vazio.textContent = 'Ainda não tem conversas. Clique em "Contactar Vendedor" num anúncio para começar.';
@@ -362,12 +251,7 @@ document.addEventListener('DOMContentLoaded', () => {
             return;
         }
 
-        minhas.forEach(c => {
-            const nome = nomeDoOutro(c);
-            const visiveis = mensagensVisiveis(c);
-            const ultima = visiveis[visiveis.length - 1];
-            const n = naoLidas(c, eu);
-
+        visiveis.forEach(c => {
             const item = document.createElement('div');
             item.className = 'msg-item' + (c.id === conversaAtiva ? ' ativa' : '');
             item.innerHTML = `
@@ -379,18 +263,18 @@ document.addEventListener('DOMContentLoaded', () => {
                 </div>
                 <div class="msg-item-lado"><span class="msg-item-hora"></span></div>
             `;
-            item.querySelector('.msg-avatar').textContent = nome.charAt(0).toUpperCase();
-            item.querySelector('.msg-item-nome').textContent = nome;
+            item.querySelector('.msg-avatar').textContent = c.nomeOutro.charAt(0).toUpperCase();
+            item.querySelector('.msg-item-nome').textContent = c.nomeOutro;
             item.querySelector('.msg-item-produto').textContent = c.produtoNome;
-            item.querySelector('.msg-item-previa').textContent = ultima
-                ? ((ultima.de === eu ? 'Você: ' : '') + ultima.texto)
+            item.querySelector('.msg-item-previa').textContent = c.ultimaMensagem
+                ? ((c.ultimaDe === meuId ? 'Você: ' : '') + c.ultimaMensagem)
                 : 'Sem mensagens';
-            item.querySelector('.msg-item-hora').textContent = ultima ? formatarHora(ultima.em) : '';
+            item.querySelector('.msg-item-hora').textContent = c.ultimaEm ? formatarHora(c.ultimaEm) : '';
 
-            if (n > 0) {
+            if (c.naoLidas > 0) {
                 const bolinha = document.createElement('span');
                 bolinha.className = 'msg-item-selo';
-                bolinha.textContent = n;
+                bolinha.textContent = c.naoLidas > 9 ? '9+' : c.naoLidas;
                 item.querySelector('.msg-item-lado').appendChild(bolinha);
             }
 
@@ -402,159 +286,194 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
-    // forcar = true -> desce sempre até à última mensagem (usado ao enviar).
-    // Caso contrário, só desce se a pessoa já estava no fim da conversa,
-    // para não "saltar" quando ela está a ler mensagens antigas.
-    async function desenharMensagens(forcar) {
-        if (!conversaAtiva) return;
-
-        await marcarLida(conversaAtiva);
-
+    // As bolhas da conversa aberta
+    function desenharMensagens(opcoes) {
         const caixa = painel.querySelector('.msg-mensagens');
         if (!caixa || !conversaAtiva) return;
-        const c = cacheConversas.find(x => x.id === conversaAtiva);
-        if (!c) return;
-        const eu = usuarioAtual();
-        const visiveis = mensagensVisiveis(c);
+        const o = opcoes || {};
 
-        const distanciaDoFim = caixa.scrollHeight - caixa.scrollTop - caixa.clientHeight;
-        const estavaNoFim = distanciaDoFim < 80;
-        const scrollAnterior = caixa.scrollTop;
-
+        const pertoDoFim = (caixa.scrollHeight - caixa.scrollTop - caixa.clientHeight) < 80;
         caixa.innerHTML = '';
-        if (visiveis.length === 0) {
+
+        if (mensagens.length === 0) {
             const vazio = document.createElement('p');
             vazio.className = 'msg-sem-mensagens';
             vazio.textContent = 'Ainda não há mensagens. Escreva a primeira!';
             caixa.appendChild(vazio);
         }
 
-        visiveis.forEach(m => {
+        let diaAnterior = '';
+        mensagens.forEach(m => {
+            const dia = new Date(m.em).toDateString();
+            if (dia !== diaAnterior) {
+                diaAnterior = dia;
+                const sep = document.createElement('div');
+                sep.className = 'msg-dia';
+                sep.textContent = nomeDoDia(m.em);
+                caixa.appendChild(sep);
+            }
+
             const bolha = document.createElement('div');
-            bolha.className = 'msg-bolha ' + (m.de === eu ? 'minha' : 'dele');
+            bolha.className = 'msg-bolha ' + (m.de === meuId ? 'minha' : 'dele')
+                + (m.estado ? ' ' + m.estado : '');
+
             const texto = document.createElement('span');
             texto.textContent = m.texto;
             texto.style.whiteSpace = 'pre-wrap';        // respeita as mudanças de linha
             texto.style.overflowWrap = 'anywhere';
-            const hora = document.createElement('small');
-            hora.textContent = formatarHora(m.em);
+
+            const info = document.createElement('small');
+            info.textContent = m.estado === 'falhou'
+                ? 'Não enviada. Toque para tentar outra vez'
+                : (m.estado === 'pendente' ? 'A enviar...' : hora(m.em));
+
             bolha.appendChild(texto);
-            bolha.appendChild(hora);
+            bolha.appendChild(info);
+
+            if (m.estado === 'falhou') {
+                bolha.addEventListener('click', () => {
+                    mensagens = mensagens.filter(x => x !== m);
+                    enviar(m.texto);
+                });
+            }
             caixa.appendChild(bolha);
         });
 
-        if (forcar || estavaNoFim) {
-            caixa.scrollTop = caixa.scrollHeight;
-        } else {
-            caixa.scrollTop = scrollAnterior;
-        }
+        if (o.fim || pertoDoFim) caixa.scrollTop = caixa.scrollHeight;
     }
 
-    // =====================================================
-    // APAGAR CONVERSA - só para quem apaga
-    // A outra pessoa continua a ver as mensagens dela.
-    // Se a outra pessoa escrever outra vez, a conversa volta a aparecer
-    // (só com as mensagens novas). Passados os 7 dias a conversa é
-    // eliminada de vez para os dois lados.
-    // =====================================================
-    function faltaColunaApagou(erro) {
-        return !!erro && /apagou_em/i.test(String(erro.message || ''));
+    // ---------------------------------------------------------
+    // Ler / apagar / enviar
+    // ---------------------------------------------------------
+    async function marcarLida(id, forcar) {
+        if (!supabaseChat || !meuId) return;
+        const c = conversas.find(x => x.id === id);
+        if (!forcar && (!c || c.naoLidas === 0)) return;
+        if (c) {
+            c.naoLidas = 0;
+            atualizarSelo();
+            desenharLista();
+        }
+        const { error } = await supabaseChat.rpc('chat_marcar_lida', { p_conversa: id });
+        if (error) console.error('chat.js: erro a marcar como lida:', error.message);
     }
 
-    const AVISO_COLUNA = 'Falta criar a coluna "apagou_em" na tabela "mensagens" do Supabase. ' +
-        'Corra no SQL Editor: alter table public.mensagens add column if not exists apagou_em jsonb not null default \'{}\'::jsonb;';
-
-    async function apagarConversa(id) {
-        const c = cacheConversas.find(x => x.id === id);
-        if (!c) return;
-
-        const aviso = 'Tem a certeza que quer apagar esta conversa?\n' +
-                      'Ela desaparece só para si. A outra pessoa continua a ver as mensagens dela.';
-        let confirmado;
-        if (typeof window.confirmar === 'function') {
-            confirmado = await window.confirmar(aviso, {
-                titulo: 'Apagar conversa',
-                sim: 'Sim',
-                nao: 'Não',
-                perigo: true
-            });
-        } else {
-            confirmado = window.confirm(aviso);
-        }
-        if (!confirmado) return;
-
-        const eu = usuarioAtual();
-        const agora = Date.now();
-        let apagouNovo = Object.assign({}, c.apagouEm || {}, { [eu]: agora });
-
-        if (supabaseChat) {
-            // Vai buscar o estado mais recente (para não apagar a marca da outra pessoa)
-            const { data: atual, error: erroLer } = await supabaseChat
-                .from('mensagens')
-                .select('apagou_em')
-                .eq('id', id)
-                .maybeSingle();
-
-            if (erroLer) {
-                alert(faltaColunaApagou(erroLer)
-                    ? AVISO_COLUNA
-                    : 'Não foi possível apagar a conversa: ' + erroLer.message);
-                return;
-            }
-
-            if (!atual) {
-                // A conversa já não existe (por exemplo, expirou): só limpa da memória
-                cacheConversas = cacheConversas.filter(x => x.id !== id);
-                conversaAtiva = null;
-                painel.classList.remove('ver-conversa');
-                await mostrarConversa(null);
-                await atualizarSelo();
-                return;
-            }
-
-            apagouNovo = Object.assign({}, atual.apagou_em || {}, { [eu]: agora });
-
-            // .select() devolve as linhas alteradas: se vier vazio, a base de dados bloqueou
-            const { data, error } = await supabaseChat
-                .from('mensagens')
-                .update({ apagou_em: apagouNovo })
-                .eq('id', id)
-                .select('id');
-
-            if (error) {
-                alert(faltaColunaApagou(error)
-                    ? AVISO_COLUNA
-                    : 'Não foi possível apagar a conversa: ' + error.message);
-                return;
-            }
-            if (!data || data.length === 0) {
-                alert('Não foi possível apagar a conversa. Verifique a permissão de alterar (UPDATE) na tabela "mensagens" do Supabase.');
-                return;
-            }
-        }
-
-        c.apagouEm = apagouNovo;
-        conversaAtiva = null;
-        painel.classList.remove('ver-conversa');
-        await mostrarConversa(null);
-        await atualizarSelo();
-        alert('Conversa apagada para si.');
+    async function recarregarMensagens() {
+        const id = conversaAtiva;
+        if (!id || !supabaseChat) return;
+        const lista = await carregarMensagens(id);
+        if (!lista || id !== conversaAtiva) return;
+        const pendentes = mensagens.filter(m => m.estado);   // as que ainda estão a enviar / falharam
+        mensagens = lista.concat(pendentes);
+        desenharMensagens();
     }
 
-    async function mostrarConversa(id) {
-        conversaAtiva = id;
-        const area = painel.querySelector('.msg-conversa');
-        const eu = usuarioAtual();
-        const c = id ? cacheConversas.find(x => x.id === id) : null;
+    function agendarAtualizacao() {
+        clearTimeout(timerAtualizacao);
+        timerAtualizacao = setTimeout(async () => {
+            if (!meuId) return;
+            await carregarConversas();
+            atualizarSelo();
+            if (painelAberto()) {
+                desenharLista();
+                // se a conversa aberta tem mensagens novas por ler, marca-as como lidas
+                if (conversaAtiva) marcarLida(conversaAtiva);
+            }
+        }, 200);
+    }
 
-        if (!c) {
-            conversaAtiva = null;
-            area.innerHTML = '<div class="msg-vazio">Escolha uma conversa para começar.</div>';
-            await desenharLista();
+    function textoDoErroDeEnvio(error) {
+        const msg = String((error && error.message) || '');
+        if (/depressa demais/i.test(msg)) return msg;
+        if (error && (error.code === '42501' || error.code === '23503' || /row-level security|foreign key/i.test(msg))) {
+            return 'Esta conversa já não existe.';
+        }
+        return 'Não foi possível enviar a mensagem. Verifique a ligação e tente outra vez.';
+    }
+
+    async function enviar(texto) {
+        const c = conversas.find(x => x.id === conversaAtiva);
+        if (!c || !meuId) {
+            notificar('Esta conversa já não existe.', 'erro');
             return;
         }
 
-        const nomeOutro = nomeDoOutro(c);
+        // Aparece logo (a cinzento) e é confirmada quando o servidor responder
+        const provisoria = { id: -Date.now(), de: meuId, texto: texto, em: Date.now(), estado: 'pendente' };
+        mensagens.push(provisoria);
+        desenharMensagens({ fim: true });
+
+        const { data, error } = await supabaseChat
+            .from('chat_mensagens')
+            .insert({ conversa_id: c.id, de_id: meuId, texto: texto })
+            .select('id,de_id,texto,criada_em')
+            .single();
+
+        mensagens = mensagens.filter(m => m !== provisoria);
+
+        if (error || !data) {
+            console.error('chat.js: erro a enviar:', error && error.message);
+            provisoria.estado = 'falhou';
+            mensagens.push(provisoria);
+            desenharMensagens({ fim: true });
+            notificar(textoDoErroDeEnvio(error), 'erro');
+            if (error && (error.code === '42501' || error.code === '23503')) agendarAtualizacao();
+            return;
+        }
+
+        const real = mapearMensagem(data);
+        if (!mensagens.some(m => m.id === real.id)) mensagens.push(real);   // o tempo real pode já a ter trazido
+        desenharMensagens({ fim: true });
+        agendarAtualizacao();
+    }
+
+    async function apagarConversa(id) {
+        const aviso = 'Tem a certeza que quer apagar esta conversa?\n' +
+                      'As mensagens serão eliminadas para os dois lados e não poderão ser recuperadas.';
+        const confirmado = window.confirmar
+            ? await window.confirmar(aviso, { titulo: 'Apagar conversa', sim: 'Sim', nao: 'Não', perigo: true })
+            : window.confirm(aviso);
+        if (!confirmado) return;
+
+        // .select() devolve as linhas apagadas: se vier vazio, a base de dados bloqueou
+        const { data, error } = await supabaseChat
+            .from('chat_conversas')
+            .delete()
+            .eq('id', id)
+            .select('id');
+
+        if (error || !data || data.length === 0) {
+            if (error) console.error('chat.js: erro a apagar:', error.message);
+            notificar('Não foi possível apagar a conversa. Tente outra vez.', 'erro');
+            return;
+        }
+
+        conversas = conversas.filter(x => x.id !== id);
+        conversaAtiva = null;
+        mensagens = [];
+        painel.classList.remove('ver-conversa');
+        await mostrarConversa(null);
+        atualizarSelo();
+        notificar('Conversa apagada com sucesso.', 'ok');
+    }
+
+    // ---------------------------------------------------------
+    // Mostrar uma conversa (lado direito)
+    // ---------------------------------------------------------
+    async function mostrarConversa(id) {
+        conversaAtiva = id;
+        const area = painel.querySelector('.msg-conversa');
+        const c = id ? conversas.find(x => x.id === id) : null;
+
+        if (!c) {
+            conversaAtiva = null;
+            mensagens = [];
+            area.innerHTML = '<div class="msg-vazio">Escolha uma conversa para começar.</div>';
+            desenharLista();
+            return;
+        }
+
+        mensagens = [];
         area.innerHTML = `
             <div class="msg-conv-topo">
                 <button type="button" class="msg-conv-voltar" aria-label="Voltar à lista">←</button>
@@ -565,7 +484,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 </div>
                 <button type="button" class="msg-conv-apagar" aria-label="Apagar conversa">Apagar</button>
             </div>
-            <div class="msg-mensagens"></div>
+            <div class="msg-mensagens" aria-live="polite"></div>
             <p class="msg-aviso-historico">Por privacidade, a conversa é guardada ${DIAS_HISTORICO} dias após a última mensagem e depois é eliminada.</p>
             <form class="msg-form">
                 <textarea class="msg-input" rows="1" placeholder="Escreva a mensagem..." maxlength="1000" autocomplete="off" enterkeyhint="enter"></textarea>
@@ -573,14 +492,13 @@ document.addEventListener('DOMContentLoaded', () => {
             </form>
         `;
 
-        area.querySelector('.msg-avatar').textContent = nomeOutro.charAt(0).toUpperCase();
-        area.querySelector('.msg-conv-nome').textContent = nomeOutro;
+        area.querySelector('.msg-avatar').textContent = c.nomeOutro.charAt(0).toUpperCase();
+        area.querySelector('.msg-conv-nome').textContent = c.nomeOutro;
         area.querySelector('.msg-conv-produto').textContent = 'Produto: ' + c.produtoNome;
 
         area.querySelector('.msg-conv-voltar').addEventListener('click', () => {
             painel.classList.remove('ver-conversa');
         });
-
         area.querySelector('.msg-conv-apagar').addEventListener('click', () => {
             apagarConversa(c.id);
         });
@@ -602,6 +520,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
         // No telemóvel o Enter muda de linha (envia-se com o botão "Enviar").
         // No computador o Enter envia e Shift+Enter muda de linha.
+        const ecraDeToque = !!(window.matchMedia && window.matchMedia('(pointer: coarse)').matches);
         input.addEventListener('keydown', (e) => {
             if (e.key === 'Enter' && !e.shiftKey && !e.isComposing && !ecraDeToque) {
                 e.preventDefault();
@@ -617,195 +536,108 @@ document.addEventListener('DOMContentLoaded', () => {
             input.value = '';
             ajustarAltura();
             input.focus();   // o teclado do telemóvel fica aberto para a mensagem seguinte
-            const enviou = await enviar(texto);
-            // Se falhou, devolve o texto à caixa para a pessoa não o perder
-            if (!enviou && !input.value) {
-                input.value = texto;
-                ajustarAltura();
-            }
+            await enviar(texto);
         });
 
-        await desenharMensagens(true);
-        await desenharLista();
-        await atualizarSelo();
+        desenharMensagens();     // "Ainda não há mensagens" enquanto carrega
+        desenharLista();
 
-        input.focus();
+        const lista = await carregarMensagens(id);
+        if (id !== conversaAtiva) return;     // a pessoa já abriu outra conversa
+        if (lista) mensagens = lista;
+        desenharMensagens({ fim: true });
+        await marcarLida(id);
+        // No telemóvel não abre o teclado sozinho (era isso que desalinhava o ecrã)
+        if (!ecraDeToque) input.focus();
     }
 
-    // Devolve true se a mensagem foi enviada, false se falhou
-    async function enviar(texto) {
-        const eu = usuarioAtual();
-        const c = cacheConversas.find(x => x.id === conversaAtiva);
-        if (!c || !eu) {
-            alert('Esta conversa já não existe.');
-            return false;
+    // ---------------------------------------------------------
+    // TELEMÓVEL: o chat ocupa o ecrã todo e a página do início fica "congelada"
+    //  - o body fica fixo (não se mexe nem com o teclado aberto)
+    //  - o painel acompanha a área realmente visível (com o teclado)
+    //  - tudo o que está por trás fica desativado (não se clica, não recebe foco)
+    // ---------------------------------------------------------
+    const vv = window.visualViewport;
+    let scrollGuardado = 0;
+    let bloqueado = false;
+    let desativados = [];
+
+    function ajustarAoEcra() {
+        if (!bloqueado) return;
+        if (vv) {
+            painel.style.setProperty('height', vv.height + 'px', 'important');
+            painel.style.setProperty('top', vv.offsetTop + 'px', 'important');
         }
-
-        const agora = Date.now();
-        const novaMsg = { de: eu, texto: texto, em: agora };
-
-        // Vai buscar a versão mais recente da conversa antes de acrescentar,
-        // para nunca apagar uma mensagem que a outra pessoa acabou de enviar.
-        let mensagensBase = c.mensagens;
-        let lidasBase = c.lidas || {};
-        if (supabaseChat) {
-            const { data: atual } = await supabaseChat
-                .from('mensagens')
-                .select('mensagens, lidas')
-                .eq('id', c.id)
-                .maybeSingle();
-            if (atual) {
-                mensagensBase = atual.mensagens || [];
-                lidasBase = atual.lidas || {};
-            }
-        }
-
-        const listaNova = mensagensBase.concat([novaMsg]);
-        const lidasNovas = Object.assign({}, lidasBase, { [eu]: agora });
-        const expiraNova = agora + DIAS_HISTORICO * UM_DIA;
-
-        if (supabaseChat) {
-            const { error } = await supabaseChat
-                .from('mensagens')
-                .update({
-                    mensagens: listaNova,
-                    atualizada_em: new Date(agora).toISOString(),
-                    expira_em: new Date(expiraNova).toISOString(),
-                    lidas: lidasNovas
-                })
-                .eq('id', c.id);
-
-            if (error) {
-                alert('Não foi possível enviar a mensagem: ' + error.message);
-                return false;
-            }
-        }
-
-        // Atualiza a memória (a conversa pode ter sido substituída pelo tempo real)
-        const atualC = cacheConversas.find(x => x.id === c.id) || c;
-        atualC.mensagens = listaNova;
-        atualC.atualizadaEm = agora;
-        atualC.expiraEm = expiraNova;
-        atualC.lidas = lidasNovas;
-
-        await desenharMensagens(true);
-        await desenharLista();
-        return true;
+        // se o navegador empurrou a página, volta ao sítio
+        if (window.scrollX || window.scrollY) window.scrollTo(0, 0);
     }
 
-    // =====================================================
-    // TEMPO REAL: mensagens que chegam aparecem na hora
-    // =====================================================
-    async function aoReceberAlteracao(payload) {
-        const eu = usuarioAtual();
-        if (!eu || !payload) return;
+    function bloquearPagina() {
+        if (bloqueado) return;
+        bloqueado = true;
+        scrollGuardado = window.pageYOffset || document.documentElement.scrollTop || 0;
+        const b = document.body.style;
+        b.position = 'fixed';
+        b.top = (-scrollGuardado) + 'px';
+        b.left = '0';
+        b.right = '0';
+        b.width = '100%';
+        b.overflow = 'hidden';
 
-        // Conversa eliminada de vez (por expirar os 7 dias)
-        if (payload.eventType === 'DELETE') {
-            const idApagado = payload.old && payload.old.id;
-            if (!idApagado) return;
-            const existia = cacheConversas.some(x => x.id === idApagado);
-            if (!existia) return;
+        desativados = [];
+        Array.from(document.body.children).forEach(el => {
+            if (el === painel || el.tagName === 'SCRIPT' || el.tagName === 'STYLE') return;
+            // janelas do aviso.js (avisos/confirmações) têm de continuar a funcionar
+            if (/aviso|toast|confirm|ls-/i.test(el.id + ' ' + el.className)) return;
+            if (el.hasAttribute('inert')) return;
+            el.setAttribute('inert', '');
+            desativados.push(el);
+        });
 
-            cacheConversas = cacheConversas.filter(x => x.id !== idApagado);
-            desenharSelo();
-
-            if (conversaAtiva === idApagado) {
-                conversaAtiva = null;
-                painel.classList.remove('ver-conversa');
-                await mostrarConversa(null);
-            } else if (painelAberto()) {
-                await desenharLista();
-            }
-            return;
-        }
-
-        // Conversa nova ou atualizada (nova mensagem, mensagem lida, apagada, etc.)
-        const linha = payload.new;
-        if (!linha || !linha.id) return;
-
-        const posicao = cacheConversas.findIndex(x => x.id === linha.id);
-        const antiga = posicao >= 0 ? cacheConversas[posicao] : null;
-        const nova = mapearConversa(linha, antiga);
-
-        // Só interessa se a conversa é minha (RLS já filtra, isto é uma segunda barreira)
-        if (!participo(nova)) return;
-
-        if (posicao >= 0) cacheConversas[posicao] = nova;
-        else cacheConversas.unshift(nova);
-
-        // Se estou a ver esta conversa, mostra a mensagem nova (e marca como lida)
-        if (painelAberto() && conversaAtiva === nova.id) {
-            await desenharMensagens();
-        }
-
-        desenharSelo();
-
-        if (painelAberto()) {
-            await desenharLista();
-        }
+        ajustarAoEcra();
     }
 
-    function pararRealtime() {
-        realtimeAtivo = false;
-        if (canalRealtime && supabaseChat) {
-            try { supabaseChat.removeChannel(canalRealtime); } catch (e) { /* ignora */ }
-        }
-        canalRealtime = null;
+    function libertarPagina() {
+        if (!bloqueado) return;
+        bloqueado = false;
+        const b = document.body.style;
+        b.position = b.top = b.left = b.right = b.width = b.overflow = '';
+        painel.style.removeProperty('height');
+        painel.style.removeProperty('top');
+        desativados.forEach(el => el.removeAttribute('inert'));
+        desativados = [];
+        window.scrollTo(0, scrollGuardado);
     }
 
-    function iniciarRealtime() {
-        pararRealtime();
-        if (!supabaseChat || !usuarioAtual()) return;
-
-        canalRealtime = supabaseChat
-            .channel('ls-chat-' + (meuId || nomeDe(usuarioAtual())))
-            .on(
-                'postgres_changes',
-                { event: '*', schema: 'public', table: 'mensagens' },
-                (payload) => {
-                    aoReceberAlteracao(payload).catch(err =>
-                        console.error('chat.js: erro no tempo real:', err));
-                }
-            )
-            .subscribe((estado) => {
-                realtimeAtivo = (estado === 'SUBSCRIBED');
-                if (estado === 'CHANNEL_ERROR' || estado === 'TIMED_OUT') {
-                    console.error('chat.js: o tempo real não ligou (' + estado + '). ' +
-                        'Verifique se o Realtime está ativo na tabela "mensagens" no Supabase.');
-                }
-            });
+    if (vv) {
+        vv.addEventListener('resize', ajustarAoEcra);
+        vv.addEventListener('scroll', ajustarAoEcra);
     }
+    window.addEventListener('scroll', ajustarAoEcra, { passive: true });
 
-    // Rede de segurança: se o tempo real não estiver ligado, atualiza a cada 8 segundos
-    setInterval(async () => {
-        if (realtimeAtivo || !usuarioAtual() || document.hidden) return;
-        await atualizarSelo();
-        if (painelAberto()) {
-            if (conversaAtiva) await desenharMensagens();
-            await desenharLista();
-        }
-    }, 8000);
+    // a lista e as mensagens deslizam sozinhas, sem arrastar a página
+    const estiloEcra = document.createElement('style');
+    estiloEcra.textContent = `
+        .msg-painel { overscroll-behavior: none; touch-action: manipulation; }
+        .msg-lista, .msg-mensagens { overscroll-behavior: contain; -webkit-overflow-scrolling: touch; }
+        .msg-input { font-size: 16px; }  /* evita o "zoom" automático do iPhone ao escrever */
+    `;
+    document.head.appendChild(estiloEcra);
 
-    // Quando a pessoa volta ao separador/aplicação (telemóvel bloqueado, outro separador),
-    // sincroniza o que possa ter chegado entretanto.
-    document.addEventListener('visibilitychange', async () => {
-        if (document.hidden || !usuarioAtual()) return;
-        await atualizarSelo();
-        if (painelAberto()) {
-            if (conversaAtiva) await desenharMensagens();
-            await desenharLista();
-        }
-    });
-
+    // ---------------------------------------------------------
+    // Abrir e fechar o painel
+    // ---------------------------------------------------------
     async function abrirMensagens(id) {
-        if (!usuarioAtual()) {
+        if (!(await garantirSessao())) {
             clicar('btn-abrir-login');
             return;
         }
-        await limparExpiradas();
         painel.classList.add('aberta');
         document.body.classList.add('sem-scroll');
+        bloquearPagina();
+
+        if (!conversas.length || id) await carregarConversas();
+        desenharLista();
 
         if (id) {
             await mostrarConversa(id);
@@ -814,37 +646,162 @@ document.addEventListener('DOMContentLoaded', () => {
             painel.classList.remove('ver-conversa');
             await mostrarConversa(null);
         }
+        limparExpiradas();
     }
 
     function fecharMensagens() {
         painel.classList.remove('aberta');
         painel.classList.remove('ver-conversa');
         document.body.classList.remove('sem-scroll');
+        libertarPagina();
         conversaAtiva = null;
+        mensagens = [];
         atualizarSelo();
+        if (meuId) agendarAtualizacao();
     }
 
-    if (btnChatTopo) btnChatTopo.addEventListener('click', () => abrirMensagens());
+    // Chamado pela montra ("Contactar Vendedor" > "Falar no Site")
+    window.abrirChatComVendedor = async function (prod) {
+        if (!(await garantirSessao())) {
+            clicar('btn-abrir-login');
+            return;
+        }
 
+        const dono = String(prod.dono || prod.user_id || '');
+        if (!dono) {
+            notificar('Este anúncio não tem chat disponível. Use o WhatsApp.', 'aviso');
+            return;
+        }
+        if (dono === meuId) {
+            notificar('Este anúncio é seu. Não pode enviar mensagens a si próprio.', 'aviso');
+            return;
+        }
+
+        const idConversa = 'p' + prod.id + '_' + meuId;
+        await carregarConversas();
+
+        if (!conversas.some(c => c.id === idConversa)) {
+            const { error } = await supabaseChat.from('chat_conversas').insert({
+                id: idConversa,
+                produto_id: String(prod.id),
+                produto_nome: prod.nome || prod.titulo || '',
+                vendedor_id: dono,
+                vendedor_nome: prod.donoNome || '',
+                comprador_id: meuId,
+                comprador_nome: meuNome
+            });
+            // 23505 = a conversa já existe (aberta noutro separador): não é erro
+            if (error && error.code !== '23505') {
+                console.error('chat.js: erro a iniciar a conversa:', error.message);
+                notificar('Não foi possível iniciar a conversa. Tente outra vez.', 'erro');
+                return;
+            }
+            await carregarConversas();
+        }
+        abrirMensagens(idConversa);
+    };
+
+    if (btnChatTopo) btnChatTopo.addEventListener('click', () => abrirMensagens());
     painel.querySelector('.msg-voltar').addEventListener('click', fecharMensagens);
 
     document.addEventListener('keydown', (e) => {
         if (e.key !== 'Escape') return;
-        if (painel.classList.contains('aberta')) fecharMensagens();
+        if (painelAberto()) fecharMensagens();
     });
 
+    // ---------------------------------------------------------
+    // Tempo real
+    // ---------------------------------------------------------
+    function aoChegarMensagem(m) {
+        if (!m) return;
+        if (m.conversa_id === conversaAtiva) {
+            if (mensagens.some(x => x.id === m.id)) return;
+
+            // o "eco" da minha própria mensagem substitui a cinzenta que ainda está a enviar
+            if (m.de_id === meuId) {
+                const i = mensagens.findIndex(x => x.estado === 'pendente' && x.texto === m.texto);
+                if (i >= 0) mensagens.splice(i, 1);
+            }
+
+            mensagens.push(mapearMensagem(m));
+            desenharMensagens({ fim: m.de_id === meuId });
+            if (m.de_id !== meuId && painelAberto()) marcarLida(conversaAtiva, true);
+        }
+        agendarAtualizacao();
+    }
+
+    function pararTempoReal() {
+        if (canal) {
+            try { supabaseChat.removeChannel(canal); } catch (e) { /* ignorar */ }
+            canal = null;
+        }
+        tempoRealOk = false;
+    }
+
+    function iniciarTempoReal() {
+        pararTempoReal();
+        if (!supabaseChat || !meuId || typeof supabaseChat.channel !== 'function') return;
+        try {
+            canal = supabaseChat
+                .channel('ls-chat-' + meuId)
+                .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'chat_mensagens' },
+                    (p) => aoChegarMensagem(p.new))
+                .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'chat_conversas' },
+                    () => agendarAtualizacao())
+                .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'chat_conversas' },
+                    () => agendarAtualizacao())
+                .subscribe((estado) => {
+                    tempoRealOk = (estado === 'SUBSCRIBED');
+                    if (estado === 'SUBSCRIBED') {
+                        // (re)ligou: apanha o que possa ter chegado entretanto
+                        agendarAtualizacao();
+                        if (conversaAtiva) recarregarMensagens();
+                    }
+                });
+        } catch (e) {
+            console.error('chat.js: tempo real indisponível:', e);
+            tempoRealOk = false;
+        }
+    }
+
+    // Se o tempo real falhar, atualiza de 15 em 15 segundos
+    setInterval(() => {
+        if (!meuId || document.hidden || tempoRealOk) return;
+        agendarAtualizacao();
+        if (conversaAtiva) recarregarMensagens();
+    }, 15000);
+
+    // Ao voltar ao separador, atualiza logo
+    document.addEventListener('visibilitychange', () => {
+        if (document.hidden || !meuId) return;
+        agendarAtualizacao();
+        if (conversaAtiva) recarregarMensagens();
+    });
+
+    // ---------------------------------------------------------
+    // Início e mudança de sessão
+    // ---------------------------------------------------------
     window.addEventListener('ls:sessao', async () => {
-        cacheConversas = [];
-        await carregarMeuId();
+        pararTempoReal();
+        conversas = [];
+        mensagens = [];
+        conversaAtiva = null;
+        const ok = await carregarMeuId();
         fecharMensagens();
-        await atualizarSelo();
-        iniciarRealtime();   // religa (ou desliga, se saiu da conta) com o utilizador certo
+        if (ok) {
+            await limparExpiradas();
+            await carregarConversas();
+            iniciarTempoReal();
+        }
+        atualizarSelo();
     });
 
     (async () => {
-        await carregarMeuId();
-        await limparExpiradas();
-        await atualizarSelo();
-        iniciarRealtime();
+        if (await carregarMeuId()) {
+            await limparExpiradas();
+            await carregarConversas();
+            iniciarTempoReal();
+        }
+        atualizarSelo();
     })();
 });
