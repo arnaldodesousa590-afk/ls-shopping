@@ -586,16 +586,36 @@ document.addEventListener('DOMContentLoaded', () => {
     const vv = window.visualViewport;
     let scrollGuardado = 0;
     let bloqueado = false;
-    let desativados = [];
+    let desativados = [];            // { el, visibilidade }
+    let fundoHtmlAnterior = '';
+    let fundoBodyAnterior = '';
+    let timersEcra = [];
+
+    // O teclado está aberto quando a área visível fica bem mais pequena que a janela
+    function tecladoAberto() {
+        return !!vv && (window.innerHeight - vv.height) > 100;
+    }
 
     function ajustarAoEcra() {
         if (!bloqueado) return;
-        if (vv) {
+        if (tecladoAberto()) {
+            // com teclado: o painel ocupa só a parte visível, por cima do teclado
             painel.style.setProperty('height', vv.height + 'px', 'important');
-            painel.style.setProperty('top', vv.offsetTop + 'px', 'important');
+            painel.style.setProperty('top', Math.max(0, vv.offsetTop) + 'px', 'important');
+        } else {
+            // sem teclado: manda o CSS (ecrã inteiro) e apagam-se os valores antigos.
+            // Era isto que deixava o painel "descido" depois de fechar o teclado.
+            painel.style.removeProperty('height');
+            painel.style.removeProperty('top');
         }
         // se o navegador empurrou a página, volta ao sítio
         if (window.scrollX || window.scrollY) window.scrollTo(0, 0);
+    }
+
+    // O iPhone demora a "assentar" quando o teclado abre/fecha: confere várias vezes
+    function reajustarVarias() {
+        timersEcra.forEach(clearTimeout);
+        timersEcra = [50, 150, 300, 600, 1000].map(ms => setTimeout(ajustarAoEcra, ms));
     }
 
     function bloquearPagina() {
@@ -610,28 +630,47 @@ document.addEventListener('DOMContentLoaded', () => {
         b.width = '100%';
         b.overflow = 'hidden';
 
+        // A página por trás fica escondida e desativada (não se vê, não se clica).
+        // Assim, o espaço entre a caixa de escrever e o teclado nunca mostra o site.
         desativados = [];
         Array.from(document.body.children).forEach(el => {
             if (el === painel || el.tagName === 'SCRIPT' || el.tagName === 'STYLE') return;
             // janelas do aviso.js (avisos/confirmações) têm de continuar a funcionar
-            if (/aviso|toast|confirm|ls-/i.test(el.id + ' ' + el.className)) return;
+            if (/aviso|toast|confirm/i.test(el.id + ' ' + el.className)) return;
             if (el.hasAttribute('inert')) return;
+            desativados.push({ el: el, visibilidade: el.style.visibility });
             el.setAttribute('inert', '');
-            desativados.push(el);
+            el.style.visibility = 'hidden';
         });
 
+        // Fundo da mesma cor do painel, para qualquer faixa livre ficar igual
+        let fundo = getComputedStyle(painel).backgroundColor;
+        if (!fundo || fundo === 'transparent' || fundo === 'rgba(0, 0, 0, 0)') fundo = '#f4f6fb';
+        fundoHtmlAnterior = document.documentElement.style.backgroundColor;
+        fundoBodyAnterior = document.body.style.backgroundColor;
+        document.documentElement.style.backgroundColor = fundo;
+        document.body.style.backgroundColor = fundo;
+
         ajustarAoEcra();
+        reajustarVarias();
     }
 
     function libertarPagina() {
         if (!bloqueado) return;
         bloqueado = false;
+        timersEcra.forEach(clearTimeout);
+        timersEcra = [];
         const b = document.body.style;
         b.position = b.top = b.left = b.right = b.width = b.overflow = '';
         painel.style.removeProperty('height');
         painel.style.removeProperty('top');
-        desativados.forEach(el => el.removeAttribute('inert'));
+        desativados.forEach(d => {
+            d.el.removeAttribute('inert');
+            d.el.style.visibility = d.visibilidade;
+        });
         desativados = [];
+        document.documentElement.style.backgroundColor = fundoHtmlAnterior;
+        document.body.style.backgroundColor = fundoBodyAnterior;
         window.scrollTo(0, scrollGuardado);
     }
 
@@ -640,11 +679,30 @@ document.addEventListener('DOMContentLoaded', () => {
         vv.addEventListener('scroll', ajustarAoEcra);
     }
     window.addEventListener('scroll', ajustarAoEcra, { passive: true });
+    window.addEventListener('orientationchange', reajustarVarias);
+
+    // Sempre que o teclado abre ou fecha (tocar na caixa / sair dela), volta a conferir
+    painel.addEventListener('focusin', reajustarVarias);
+    painel.addEventListener('focusout', reajustarVarias);
 
     // a lista e as mensagens deslizam sozinhas, sem arrastar a página
     const estiloEcra = document.createElement('style');
     estiloEcra.textContent = `
         .msg-painel { overscroll-behavior: none; touch-action: manipulation; }
+        /* Painel aberto = ecrã inteiro, sempre a partir do topo.
+           (com o teclado aberto o JavaScript põe a altura e o topo certos por cima disto) */
+        .msg-painel.aberta {
+            position: fixed !important;
+            top: 0 !important;
+            left: 0 !important;
+            right: 0 !important;
+            bottom: auto !important;
+            width: 100% !important;
+            height: 100vh !important;
+            height: 100dvh !important;
+            max-height: none !important;
+            transform: none !important;
+        }
         .msg-lista, .msg-mensagens { overscroll-behavior: contain; -webkit-overflow-scrolling: touch; }
         .msg-input { font-size: 16px; }  /* evita o "zoom" automático do iPhone ao escrever */
     `;
