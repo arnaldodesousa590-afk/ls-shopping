@@ -6,7 +6,6 @@
 // 2. window.confirmar(...) é a confirmação do site (Sim / Cancelar).
 // 3. Sempre que o site fala com o Supabase aparece uma barra no topo e
 //    um "A processar..." em baixo, e o botão que foi carregado fica ocupado.
-// 4. Ao carregar em "Sair" aparece "Tem a certeza que quer sair?" (Sim / Não).
 //
 // Os estilos estão dentro deste ficheiro: não é preciso mexer no style.css.
 // =========================================================
@@ -440,49 +439,4 @@
     window.avisar = avisar;
     window.confirmar = confirmar;
     window.lsFetch = lsFetch;
-
-    // =====================================================
-    // 7. CONFIRMAR ANTES DE SAIR
-    //    Apanha o botão "Sair" do topo (#btn-sair) e o "Sair" do menu lateral
-    //    (data-acao="sair"). Se a pessoa disser Sim, o clique segue normalmente
-    //    e o código de logout que já existe faz o resto.
-    // =====================================================
-    var sairConfirmado = false;
-    var sairAPerguntar = false;
-
-    document.addEventListener('click', function (e) {
-        var alvo = e.target && e.target.closest
-            ? e.target.closest('#btn-sair, [data-acao="sair"]')
-            : null;
-        if (!alvo) return;
-
-        // Clique já confirmado: deixa passar para o código de logout
-        if (sairConfirmado) return;
-
-        // Se ninguém tem sessão iniciada, não faz sentido perguntar
-        var painel = document.getElementById('usuario-logado');
-        if (painel && painel.style.display === 'none') return;
-
-        // Bloqueia o logout até a pessoa responder
-        e.preventDefault();
-        e.stopImmediatePropagation();
-
-        if (sairAPerguntar) return;
-        sairAPerguntar = true;
-
-        confirmar('Tem a certeza que quer sair da sua conta?', {
-            titulo: 'Sair',
-            sim: 'Sim',
-            nao: 'Não',
-            destaque: 'nao'
-        }).then(function (resposta) {
-            sairAPerguntar = false;
-            if (!resposta) return;
-
-            // Repete o clique, agora autorizado
-            sairConfirmado = true;
-            try { alvo.click(); }
-            finally { sairConfirmado = false; }
-        });
-    }, true);
 })();
