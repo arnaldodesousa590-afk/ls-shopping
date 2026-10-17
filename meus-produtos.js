@@ -140,7 +140,7 @@ document.addEventListener('DOMContentLoaded', () => {
             cartao.querySelector('img').src = p.imagem;
             cartao.querySelector('h3').textContent = p.nome;
             cartao.querySelector('.meu-produto-detalhes').textContent =
-                Number(p.preco).toLocaleString('pt-AO') + ' Kz · Quantidade: ' + p.unidades + ' · ' + p.categoria;
+                Number(p.preco).toLocaleString('pt-AO', { minimumFractionDigits: Number.isInteger(Number(p.preco)) ? 0 : 2, maximumFractionDigits: 2 }) + ' Kz · Quantidade: ' + p.unidades + ' · ' + p.categoria;
 
             const estado = cartao.querySelector('.meu-produto-estado');
             const dias = diasRestantes(p);

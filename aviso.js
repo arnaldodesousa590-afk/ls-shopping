@@ -114,6 +114,10 @@
     .ls-btn-nao { background: #fff; color: ${AZUL}; }
     .ls-btn-sim { background: ${AZUL}; color: #fff; }
     .ls-btn-sim.perigo { background: #c62828; border-color: #c62828; }
+    /* Pergunta "Sim / Não" com o "Não" em destaque (ex.: sair da conta) */
+    .ls-btn-nao.destaque { background: ${AZUL}; color: #fff; }
+    .ls-btn-sim.contorno { background: #fff; color: ${AZUL}; border-color: ${AZUL}; }
+    .ls-confirmar-par button { flex: 1 1 0; min-width: 0; }
     `;
 
     var estilo = document.createElement('style');
@@ -256,6 +260,13 @@
             btnSim.className = 'ls-btn-sim' + (o.perigo ? ' perigo' : '');
             btnSim.textContent = o.sim || 'Confirmar';
 
+            // destaque: 'nao' => o "Não" fica azul cheio e o "Sim" branco com contorno azul
+            if (o.destaque === 'nao') {
+                btnNao.classList.add('destaque');
+                btnSim.classList.add('contorno');
+                botoes.classList.add('ls-confirmar-par');
+            }
+
             botoes.appendChild(btnNao);
             botoes.appendChild(btnSim);
             caixa.appendChild(titulo);
@@ -287,7 +298,7 @@
             document.body.appendChild(fundo);
 
             // Nas ações perigosas o foco fica no "Cancelar", para o Enter não apagar sem querer
-            (o.perigo ? btnNao : btnSim).focus();
+            ((o.perigo || o.destaque === 'nao') ? btnNao : btnSim).focus();
         });
     }
 
@@ -463,7 +474,7 @@
             titulo: 'Sair',
             sim: 'Sim',
             nao: 'Não',
-            perigo: true
+            destaque: 'nao'
         }).then(function (resposta) {
             sairAPerguntar = false;
             if (!resposta) return;

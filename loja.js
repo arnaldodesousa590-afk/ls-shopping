@@ -140,7 +140,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 </div>
                 <div style="padding: 16px; display: flex; flex-direction: column; flex-grow: 1;">
                     <h3 style="font-size: 16px; font-weight: 600; color: #0f172a; margin: 0 0 6px 0; line-height: 1.3;">${p.nome}</h3>
-                    <strong style="font-size: 18px; color: #000000; margin-bottom: 4px; display: block; font-weight: 700;">${Number(p.preco).toLocaleString('pt-AO')} Kz</strong>
+                    <strong style="font-size: 18px; color: #000000; margin-bottom: 4px; display: block; font-weight: 700;">${formatarKz(p.preco)} Kz</strong>
                     <span style="font-size: 12px; color: ${unidadesCor}; margin-bottom: 10px; display: block; font-weight: 600;">${unidadesTexto}</span>
                     
                     <div style="margin-bottom: 12px; flex-grow: 1;">
@@ -316,6 +316,103 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
+    // ---------------------------------------------------------------
+    // Zona de ANUNCIAR: "Quantidade" e preço com separadores automáticos
+    // ---------------------------------------------------------------
+    // true: ao sair do campo, 1500 passa a 1 500,00 (com as casas decimais)
+    const MOSTRAR_DECIMAIS_NO_FIM = true;
+
+    // Mostra um preço: 1 500 Kz ou, se tiver cêntimos, 1 500,50 Kz
+    function formatarKz(valor) {
+        const n = Number(valor);
+        if (!isFinite(n)) return '0';
+        return n.toLocaleString('pt-AO', {
+            minimumFractionDigits: Number.isInteger(n) ? 0 : 2,
+            maximumFractionDigits: 2
+        });
+    }
+
+    // Lê o que a pessoa escreveu: aceita 20000, 20 000, 20.000, 20.000.000, 1500,50 ou 1500.50
+    function analisarPreco(texto) {
+        const s = String(texto || '').replace(/[\s\u00a0\u202f]/g, '').replace(/[^\d.,]/g, '');
+        const ultimo = Math.max(s.lastIndexOf(','), s.lastIndexOf('.'));
+        let inteiro = s;
+        let decimais = '';
+        let temSeparador = false;
+
+        if (ultimo !== -1) {
+            const depois = s.slice(ultimo + 1).replace(/\D/g, '');
+            const antes = s.slice(0, ultimo).replace(/\D/g, '');
+            if (depois.length === 3) {
+                inteiro = antes + depois;          // 20.000 = vinte mil (separador de milhares)
+            } else {
+                inteiro = antes;                   // 1500,5 = cêntimos
+                decimais = depois.slice(0, 2);
+                temSeparador = true;
+            }
+        }
+        inteiro = inteiro.replace(/\D/g, '').replace(/^0+(?=\d)/, '').slice(0, 12);
+        return { inteiro: inteiro, decimais: decimais, temSeparador: temSeparador };
+    }
+
+    function formatarPreco(a, fixarDecimais) {
+        if (!a.inteiro && !a.temSeparador) return '';
+        const inteiro = a.inteiro || '0';
+        const agrupado = inteiro.replace(/\B(?=(\d{3})+(?!\d))/g, ' ');
+        if (fixarDecimais) return agrupado + ',' + (a.decimais + '00').slice(0, 2);
+        return a.temSeparador ? agrupado + ',' + a.decimais : agrupado;
+    }
+
+    // O valor do preço como número (NaN se estiver vazio)
+    function lerPreco() {
+        const a = analisarPreco(inputPreco ? inputPreco.value : '');
+        if (!a.inteiro && !a.temSeparador) return NaN;
+        return Number((a.inteiro || '0') + '.' + (a.decimais || '0'));
+    }
+
+    if (inputUnidades) {
+        inputUnidades.placeholder = 'Quantidade';
+        inputUnidades.setAttribute('aria-label', 'Quantidade');
+        inputUnidades.setAttribute('inputmode', 'numeric');
+    }
+
+    if (inputPreco) {
+        inputPreco.type = 'text';                      // um campo "number" não aceita espaços
+        inputPreco.setAttribute('inputmode', 'decimal'); // no telemóvel abre o teclado dos números
+        inputPreco.setAttribute('autocomplete', 'off');
+        inputPreco.setAttribute('aria-label', 'Preço');
+
+        inputPreco.addEventListener('input', () => {
+            const bruto = inputPreco.value;
+            const pos = inputPreco.selectionStart === null ? bruto.length : inputPreco.selectionStart;
+            const digitosAntes = bruto.slice(0, pos).replace(/\D/g, '').length;
+            const novo = formatarPreco(analisarPreco(bruto), false);
+            if (novo === bruto) return;
+            inputPreco.value = novo;
+
+            // o cursor fica depois do mesmo número de dígitos (não salta para o fim)
+            let i = novo.length;
+            if (pos < bruto.length) {
+                let n = 0;
+                for (i = 0; i < novo.length && n < digitosAntes; i++) {
+                    if (/\d/.test(novo[i])) n++;
+                }
+            }
+            try { inputPreco.setSelectionRange(i, i); } catch (e) { /* ignorar */ }
+        });
+
+        // ao entrar no campo tira o ",00" para ser fácil continuar a escrever
+        inputPreco.addEventListener('focus', () => {
+            inputPreco.value = inputPreco.value.replace(/,00$/, '');
+        });
+
+        // ao sair do campo completa as casas decimais
+        inputPreco.addEventListener('blur', () => {
+            if (!MOSTRAR_DECIMAIS_NO_FIM) return;
+            inputPreco.value = formatarPreco(analisarPreco(inputPreco.value), true);
+        });
+    }
+
     // 7. MODAL DE PUBLICAR PRODUTO
     function abrirModalPublicar() {
         const usuario = localStorage.getItem('ls_sessao');
@@ -404,7 +501,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
             const nome = inputNome ? inputNome.value.trim() : '';
             const categoria = inputCategoria ? inputCategoria.value : '';
-            const preco = inputPreco ? Number(inputPreco.value) : 0;
+            const preco = lerPreco();
             const unidades = inputUnidades ? Number(inputUnidades.value) : 1;
             const contacto = inputContacto ? inputContacto.value.trim() : '';
             const descricao = inputDescricao ? inputDescricao.value.trim() : '';

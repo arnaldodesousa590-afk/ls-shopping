@@ -1,6 +1,7 @@
 // =========================================================
 // LS SHOPPING - Contacto e chat do site (chat.js)
 // Versão Supabase Integrada e com Selo iOS
+// + Botão "Apagar conversa" (sem esperar os 7 dias)
 // =========================================================
 
 const supabaseChat = window.supabaseLS;
@@ -14,6 +15,25 @@ document.addEventListener('DOMContentLoaded', () => {
     let cacheConversas = [];
     let meuId = '';      // ID do utilizador no Supabase (identifica o vendedor)
     let meuNome = '';    // nome de utilizador (mostrado no chat)
+
+    // Estilo do botão "Apagar" (fica aqui dentro, não é preciso mexer no style.css)
+    const estiloApagar = document.createElement('style');
+    estiloApagar.textContent = `
+        .msg-conv-apagar {
+            margin-left: auto;
+            flex: none;
+            background: none;
+            border: 1px solid #c62828;
+            color: #c62828;
+            border-radius: 8px;
+            padding: 6px 12px;
+            font-size: 13px;
+            font-weight: 600;
+            cursor: pointer;
+        }
+        .msg-conv-apagar:hover { background: #c62828; color: #fff; }
+    `;
+    document.head.appendChild(estiloApagar);
 
     function usuarioAtual() {
         return localStorage.getItem('ls_sessao') || localStorage.getItem('ls_usuario') || '';
@@ -376,6 +396,54 @@ document.addEventListener('DOMContentLoaded', () => {
         caixa.scrollTop = caixa.scrollHeight;
     }
 
+    // =====================================================
+    // APAGAR CONVERSA (sem esperar os 7 dias)
+    // =====================================================
+    async function apagarConversa(id) {
+        const c = cacheConversas.find(x => x.id === id);
+        if (!c) return;
+
+        const aviso = 'Tem a certeza que quer apagar esta conversa?\n' +
+                      'As mensagens serão eliminadas para os dois lados e não poderão ser recuperadas.';
+        let confirmado;
+        if (typeof window.confirmar === 'function') {
+            confirmado = await window.confirmar(aviso, {
+                titulo: 'Apagar conversa',
+                sim: 'Sim',
+                nao: 'Não',
+                perigo: true
+            });
+        } else {
+            confirmado = window.confirm(aviso);
+        }
+        if (!confirmado) return;
+
+        if (supabaseChat) {
+            // .select() devolve as linhas apagadas: se vier vazio, a base de dados bloqueou
+            const { data, error } = await supabaseChat
+                .from('mensagens')
+                .delete()
+                .eq('id', id)
+                .select();
+
+            if (error) {
+                alert('Não foi possível apagar a conversa: ' + error.message);
+                return;
+            }
+            if (!data || data.length === 0) {
+                alert('Não foi possível apagar a conversa. Verifique a permissão de apagar (DELETE) na tabela "mensagens" do Supabase.');
+                return;
+            }
+        }
+
+        cacheConversas = cacheConversas.filter(x => x.id !== id);
+        conversaAtiva = null;
+        painel.classList.remove('ver-conversa');
+        await mostrarConversa(null);
+        await atualizarSelo();
+        alert('Conversa apagada com sucesso.');
+    }
+
     async function mostrarConversa(id) {
         conversaAtiva = id;
         const area = painel.querySelector('.msg-conversa');
@@ -398,6 +466,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     <strong class="msg-conv-nome"></strong>
                     <small class="msg-conv-produto"></small>
                 </div>
+                <button type="button" class="msg-conv-apagar" aria-label="Apagar conversa">Apagar</button>
             </div>
             <div class="msg-mensagens"></div>
             <p class="msg-aviso-historico">Por privacidade, a conversa é guardada ${DIAS_HISTORICO} dias após a última mensagem e depois é eliminada.</p>
@@ -413,6 +482,10 @@ document.addEventListener('DOMContentLoaded', () => {
 
         area.querySelector('.msg-conv-voltar').addEventListener('click', () => {
             painel.classList.remove('ver-conversa');
+        });
+
+        area.querySelector('.msg-conv-apagar').addEventListener('click', () => {
+            apagarConversa(c.id);
         });
 
         const form = area.querySelector('.msg-form');

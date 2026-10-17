@@ -320,7 +320,7 @@ document.addEventListener('DOMContentLoaded', () => {
     // =====================================================
     // 9. SAIR (terminar sessão corretamente)
     // =====================================================
-    ligar(btnSair, 'click', async () => {
+    async function terminarSessao() {
         if (supabaseClient) {
             await supabaseClient.auth.signOut();
         }
@@ -329,7 +329,29 @@ document.addEventListener('DOMContentLoaded', () => {
         mostrarDeslogado();
         avisarSessao();
         if (window.avisar) window.avisar('Sessão terminada.', 'info');
-    });
+    }
+
+    // Antes de sair, pergunta se a pessoa tem a certeza
+    async function perguntarESair() {
+        const pergunta = 'Tem a certeza de que quer sair da sua conta?';
+        const confirmado = window.confirmar
+            ? await window.confirmar(pergunta, { titulo: 'Sair da conta', sim: 'Sim', nao: 'Não', destaque: 'nao' })
+            : confirm(pergunta);
+        if (confirmado) await terminarSessao();
+    }
+
+    ligar(btnSair, 'click', perguntarESair);
+
+    // A opção "Sair" do menu lateral também pergunta primeiro
+    document.addEventListener('click', (e) => {
+        const itemSair = e.target && e.target.closest ? e.target.closest('#menu-lateral [data-acao="sair"]') : null;
+        if (!itemSair || !localStorage.getItem('ls_sessao')) return;
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        const fecharMenu = document.getElementById('fechar-menu');
+        if (fecharMenu) fecharMenu.click();
+        perguntarESair();
+    }, true);
 
     // =====================================================
     // 10. AO ABRIR O SITE: verificar sessão ativa no Supabase
