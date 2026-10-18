@@ -1,6 +1,7 @@
 // =========================================================
 // LS SHOPPING - Meus Produtos (meus-produtos.js)
 // Zona à parte onde o vendedor gere os seus anúncios.
+// (A lista lê só a miniatura da capa, não as 6 fotos de cada anúncio.)
 // =========================================================
 
 const supabaseMeus = window.supabaseLS;
@@ -67,16 +68,28 @@ document.addEventListener('DOMContentLoaded', () => {
         if (!supabaseMeus) return [];
         const { data: { session } } = await supabaseMeus.auth.getSession();
         const userId = session ? session.user.id : null;
+        if (!userId) return [];
 
-        let query = supabaseMeus.from('produtos').select('*');
-        if (userId) {
-            query = query.eq('user_id', userId);
-        } else {
-            return [];
+        // Só as colunas necessárias, sem as 6 fotos de cada anúncio (pesam muito)
+        const colunas = 'id,user_id,titulo,categoria,preco,unidades,contacto,descricao,imagem_url,vendido,criado_em';
+
+        let resposta = await supabaseMeus
+            .from('produtos')
+            .select(colunas + ',miniatura')
+            .eq('user_id', userId)
+            .order('criado_em', { ascending: false });
+
+        if (resposta.error) {
+            // a coluna "miniatura" ainda não existe no Supabase: lê sem ela
+            resposta = await supabaseMeus
+                .from('produtos')
+                .select(colunas)
+                .eq('user_id', userId)
+                .order('criado_em', { ascending: false });
         }
 
-        const { data, error } = await query.order('criado_em', { ascending: false });
-        if (error || !data) return [];
+        const data = resposta.data;
+        if (resposta.error || !data) return [];
 
         return data.map(p => ({
             id: p.id,
@@ -87,8 +100,7 @@ document.addEventListener('DOMContentLoaded', () => {
             unidades: p.unidades || 1,
             contacto: p.contacto || '',
             descricao: p.descricao,
-            imagens: p.imagens || [p.imagem_url || p.imagem || 'ls.png'],
-            imagem: p.imagem_url || p.imagem || 'ls.png',
+            imagem: p.miniatura || p.imagem_url || 'ls.png',
             vendido: p.vendido || false,
             expiraEm: p.criado_em ? new Date(p.criado_em).getTime() + (30 * 24 * 60 * 60 * 1000) : Date.now() + (30 * 24 * 60 * 60 * 1000)
         }));

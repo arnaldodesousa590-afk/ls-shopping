@@ -1641,19 +1641,16 @@ body.sem-scroll{
 
 /*---Para telas grandes---*/
 @media (min-width: 1440px) {
-    body {
-        max-width: 1660px;
-        margin: 0 auto;
-        box-shadow: 0 0 20px rgba(0, 0, 0, 0.1);
+    .container-produtos {
+        max-width: 1400px;
     }
     .container-produtos h2 {
         font-size: 32px;
     }
     .grid-produtos {
-        grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+        grid-template-columns: repeat(4, minmax(0, 1fr));
     }
 }
-
 /* O brilho do botão "Sair" respira devagar */
 @keyframes sair-led {
     0%, 100% {
@@ -1666,4 +1663,52 @@ body.sem-scroll{
                     0 0 12px 3px rgba(77, 163, 255, 0.70),
                     0 0 26px rgba(77, 163, 255, 0.40);
     }
+}
+/* ---- Botão "Sair" no PC: igual ao do telemóvel ---- */
+@media (min-width: 769px) {
+    .btn-sair {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 6px;
+        min-height: 34px;
+        padding: 0 14px;
+        white-space: nowrap;
+        font-size: 13px;
+        font-weight: 700;
+        line-height: 1;
+        letter-spacing: 0.2px;
+        text-decoration: none;
+        color: #ffffff;
+        background-color: #001854;
+        border: 1px solid #4da3ff;
+        border-radius: 999px;
+        cursor: pointer;
+        box-shadow: 0 0 0 1px rgba(77, 163, 255, 0.35),
+                    0 0 10px 2px rgba(77, 163, 255, 0.55),
+                    0 0 22px rgba(77, 163, 255, 0.30);
+        animation: sair-led 2.6s ease-in-out infinite;
+        transition: transform 0.15s ease;
+    }
+    .btn-sair::before {
+        content: '';
+        width: 14px;
+        height: 14px;
+        background-color: currentColor;
+        -webkit-mask: url("data:image/svg+xml;utf8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M5 22C4.44772 22 4 21.5523 4 21V3C4 2.44772 4.44772 2 5 2H19C19.5523 2 20 2.44772 20 3V6H18V4H6V20H18V18H20V21C20 21.5523 19.5523 22 19 22H5ZM18 16V13H11V11H18V8L23 12L18 16Z'/%3E%3C/svg%3E") center / contain no-repeat;
+        mask: url("data:image/svg+xml;utf8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M5 22C4.44772 22 4 21.5523 4 21V3C4 2.44772 4.44772 2 5 2H19C19.5523 2 20 2.44772 20 3V6H18V4H6V20H18V18H20V21C20 21.5523 19.5523 22 19 22H5ZM18 16V13H11V11H18V8L23 12L18 16Z'/%3E%3C/svg%3E") center / contain no-repeat;
+    }
+    .btn-sair:hover {
+        transform: scale(1.05);
+    }
+    .btn-sair:active {
+        transform: scale(0.95);
+    }
+    .btn-sair:focus-visible {
+        outline: 2px solid #ffffff;
+        outline-offset: 3px;
+    }
+}
+@media (min-width: 769px) and (prefers-reduced-motion: reduce) {
+    .btn-sair { animation: none; }
 }

@@ -1,6 +1,12 @@
 // =========================================================
 // LS SHOPPING - Loja / Vitrine principal (loja.js)
 // Versão Profissional: Cor exata #002780 e integração Supabase
+//
+// CAPACIDADE: a página inicial já não descarrega as 6 fotos de cada anúncio.
+//  - lê primeiro só o texto dos anúncios (pesquisa e categorias funcionam como antes);
+//  - depois vai buscar só a foto de capa (miniatura pequena) dos 24 anúncios que aparecem;
+//  - quando a pessoa desce a página, carrega os seguintes sozinho (sem botão);
+//  - as 6 fotos só são lidas quando alguém abre o anúncio (galeria.js).
 // =========================================================
 
 const supabaseLoja = window.supabaseLS;
@@ -33,15 +39,23 @@ document.addEventListener('DOMContentLoaded', () => {
     let termoPesquisa = '';
     let imagensTemp = [];
 
+    // Vitrine em páginas
+    const TAMANHO_PAGINA = 24;          // anúncios carregados de cada vez (invisível para o utilizador)
+    const LADO_MINIATURA = 480;         // tamanho (px) da miniatura da capa
+    const QUALIDADE_MINIATURA = 0.65;
+    let listaAtual = [];                // anúncios (só texto) que passam nos filtros
+    let mostrados = 0;                  // quantos já estão no ecrã
+    let geracaoVitrine = 0;             // evita misturar resultados de pedidos antigos
+
     // COR PROFISSIONAL DEFINIDA PELO KING (#002780)
     const COR_AZUL_PADRAO = '#002780';
 
-    // 2. LER PRODUTOS DO SUPABASE
+    // 2. LER PRODUTOS DO SUPABASE (só texto, sem fotos: é leve)
     async function lerProdutos() {
         if (!supabaseLoja) return [];
         const { data, error } = await supabaseLoja
             .from('produtos')
-            .select('*')
+            .select('id,user_id,dono_nome,titulo,categoria,preco,unidades,contacto,descricao,vendido,criado_em')
             .order('criado_em', { ascending: false });
 
         if (error || !data) return [];
@@ -57,8 +71,6 @@ document.addEventListener('DOMContentLoaded', () => {
             unidades: Number(p.unidades ?? 1),
             contacto: p.contacto || '',
             descricao: p.descricao,
-            imagens: p.imagens || [p.imagem_url || p.imagem || 'ls.png'],
-            imagem: p.imagem_url || p.imagem || 'ls.png',
             vendido: p.vendido || false,
             criadoEm: p.criado_em ? new Date(p.criado_em).getTime() : agora,
             expiraEm: p.criado_em ? new Date(p.criado_em).getTime() + (30 * 24 * 60 * 60 * 1000) : agora + (30 * 24 * 60 * 60 * 1000)
@@ -67,9 +79,62 @@ document.addEventListener('DOMContentLoaded', () => {
         return listaMapeada.filter(p => !p.vendido && (!p.expiraEm || p.expiraEm > agora));
     }
 
+    // Vai buscar só a foto de capa dos anúncios pedidos: { id: 'data:image...' }
+    // Usa a miniatura (pequena) se existir; nos anúncios antigos usa a capa normal.
+    async function lerCapas(ids) {
+        const mapa = {};
+        if (!supabaseLoja || !ids.length) return mapa;
+
+        let resposta = await supabaseLoja
+            .from('produtos')
+            .select('id,miniatura,imagem_url')
+            .in('id', ids);
+
+        if (resposta.error) {
+            // a coluna "miniatura" ainda não existe no Supabase: usa só a capa normal
+            resposta = await supabaseLoja
+                .from('produtos')
+                .select('id,imagem_url')
+                .in('id', ids);
+        }
+        if (resposta.error || !resposta.data) return mapa;
+
+        resposta.data.forEach(x => {
+            mapa[x.id] = x.miniatura || x.imagem_url || '';
+        });
+        return mapa;
+    }
+
+    // Cria uma miniatura pequena (para as listas) a partir de uma foto
+    function criarMiniatura(dataUrl) {
+        return new Promise((resolve) => {
+            if (!dataUrl) { resolve(null); return; }
+            const img = new Image();
+            img.onerror = () => resolve(null);
+            img.onload = () => {
+                try {
+                    const escala = Math.min(1, LADO_MINIATURA / Math.max(img.width, img.height));
+                    const canvas = document.createElement('canvas');
+                    canvas.width = Math.max(1, Math.round(img.width * escala));
+                    canvas.height = Math.max(1, Math.round(img.height * escala));
+                    const ctx = canvas.getContext('2d');
+                    ctx.fillStyle = '#ffffff';
+                    ctx.fillRect(0, 0, canvas.width, canvas.height);
+                    ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+                    resolve(canvas.toDataURL('image/jpeg', QUALIDADE_MINIATURA));
+                } catch (e) {
+                    resolve(null);
+                }
+            };
+            img.src = dataUrl;
+        });
+    }
+
     // 3. RENDERIZAR A VITRINE
     async function renderizarVitrine() {
         if (!gridProdutos) return;
+        const minhaGeracao = ++geracaoVitrine;
+        pararObservador();
 
         gridProdutos.innerHTML = `
             <div style="grid-column: 1 / -1; display: flex; align-items: center; justify-content: center; gap: 10px; padding: 50px 20px; color: #64748b; font-size: 14px;">
@@ -78,6 +143,7 @@ document.addEventListener('DOMContentLoaded', () => {
         `;
 
         let produtos = await lerProdutos();
+        if (minhaGeracao !== geracaoVitrine) return;   // chegou um pedido mais recente
         let temFiltroAtivo = false;
 
         // Filtro por Categoria
@@ -109,6 +175,8 @@ document.addEventListener('DOMContentLoaded', () => {
         }
 
         gridProdutos.innerHTML = '';
+        listaAtual = produtos;
+        mostrados = 0;
 
         if (produtos.length === 0) {
             gridProdutos.innerHTML = `
@@ -120,68 +188,132 @@ document.addEventListener('DOMContentLoaded', () => {
             return;
         }
 
-        produtos.forEach(p => {
-            const capa = (p.imagens && p.imagens.length > 0) ? p.imagens[0] : (p.imagem || 'ls.png');
-            const cartao = document.createElement('div');
-            cartao.className = 'produto-card';
-            cartao.style.cssText = 'background: #fff; border-radius: 8px; overflow: hidden; box-shadow: 0 2px 10px rgba(0,0,0,0.06); display: flex; flex-direction: column; border: 1px solid #e2e8f0;';
-            
-            const descTexto = p.descricao || 'Sem descrição informada.';
-            const precisaVerMais = descTexto.length > 45;
-            const unidadesTexto = p.unidades > 0
-                ? 'Quantidade disponível: ' + p.unidades
-                : 'Esgotado';
-            const unidadesCor = p.unidades > 0 ? '#64748b' : '#c62828';
+        await mostrarMais(minhaGeracao);
+    }
 
-            cartao.innerHTML = `
-                <div style="position: relative; width: 100%; height: 195px; background: #f8fafc; overflow: hidden;">
-                    <img src="${capa}" alt="${p.nome}" data-galeria="${p.id}" style="width: 100%; height: 100%; object-fit: cover; cursor: pointer;">
-                    <span style="position: absolute; top: 10px; right: 10px; background: rgba(15, 23, 42, 0.75); color: #fff; font-size: 10px; padding: 4px 8px; border-radius: 4px; text-transform: uppercase; font-weight: 600; letter-spacing: 0.5px;">${p.categoria}</span>
-                </div>
-                <div style="padding: 16px; display: flex; flex-direction: column; flex-grow: 1;">
-                    <h3 style="font-size: 16px; font-weight: 600; color: #0f172a; margin: 0 0 6px 0; line-height: 1.3;">${p.nome}</h3>
-                    <strong style="font-size: 18px; color: #000000; margin-bottom: 4px; display: block; font-weight: 700;">${formatarKz(p.preco)} Kz</strong>
-                    <span style="font-size: 12px; color: ${unidadesCor}; margin-bottom: 10px; display: block; font-weight: 600;">${unidadesTexto}</span>
-                    
-                    <div style="margin-bottom: 12px; flex-grow: 1;">
-                        <p class="desc-curta" style="font-size: 13px; color: #475569; margin: 0; line-height: 1.4; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">${descTexto}</p>
-                        <p class="desc-completa" style="font-size: 13px; color: #475569; margin: 0; line-height: 1.4; display: none;">${descTexto}</p>
-                        ${precisaVerMais ? `<button type="button" class="btn-toggle-desc" style="background: none; border: none; color: ${COR_AZUL_PADRAO}; font-size: 12px; padding: 0; margin-top: 4px; cursor: pointer; font-weight: 600;">Ver mais</button>` : ''}
-                    </div>
+    // Mostra os próximos anúncios. Corre sozinho quando a pessoa desce a página
+    // (como no AliExpress): não há botão "Ver mais".
+    let observador = null;
 
-                    <div style="font-size: 12px; color: #64748b; margin-bottom: 14px; border-top: 1px solid #f1f5f9; padding-top: 8px;">
-                        <strong>Contacto:</strong> ${p.contacto || 'Não informado'}
-                    </div>
+    function pararObservador() {
+        if (observador) {
+            observador.disconnect();
+            observador = null;
+        }
+    }
 
-                    <button type="button" class="btn-contacto-prod" style="width: 100%; padding: 11px; background: ${COR_AZUL_PADRAO}; color: #fff; border: none; border-radius: 6px; font-weight: 600; cursor: pointer; font-size: 14px; transition: opacity 0.2s;">Contactar Vendedor</button>
-                </div>
-            `;
+    async function mostrarMais(geracao) {
+        pararObservador();
+        const lote = listaAtual.slice(mostrados, mostrados + TAMANHO_PAGINA);
+        if (lote.length === 0) return;
 
-            if (precisaVerMais) {
-                const btnToggle = cartao.querySelector('.btn-toggle-desc');
-                const descCurta = cartao.querySelector('.desc-curta');
-                const descCompleta = cartao.querySelector('.desc-completa');
+        const capas = await lerCapas(lote.map(p => p.id));
+        if (geracao !== geracaoVitrine) return;        // a lista mudou entretanto
 
-                btnToggle.addEventListener('click', () => {
-                    const expandido = descCompleta.style.display === 'block';
-                    if (expandido) {
-                        descCompleta.style.display = 'none';
-                        descCurta.style.display = 'block';
-                        btnToggle.textContent = 'Ver mais';
-                    } else {
-                        descCurta.style.display = 'none';
-                        descCompleta.style.display = 'block';
-                        btnToggle.textContent = 'Ver menos';
-                    }
-                });
-            }
+        const marcaAntiga = document.getElementById('marca-mais-produtos');
+        if (marcaAntiga) marcaAntiga.remove();
 
-            cartao.querySelector('.btn-contacto-prod').addEventListener('click', () => {
-                abrirOpcoesContacto(p);
-            });
-
-            gridProdutos.appendChild(cartao);
+        lote.forEach(p => {
+            gridProdutos.appendChild(criarCartao(p, capas[p.id] || 'ls.png'));
         });
+        mostrados += lote.length;
+
+        if (mostrados < listaAtual.length) {
+            prepararProximos(geracao);
+        }
+    }
+
+    // Põe uma marca no fim da lista: quando a pessoa chega perto dela, carrega mais
+    function prepararProximos(geracao) {
+        const marca = document.createElement('div');
+        marca.id = 'marca-mais-produtos';
+        marca.style.cssText = 'grid-column: 1 / -1; display: flex; align-items: center; justify-content: center; gap: 10px; padding: 24px 0 32px; min-height: 60px; color: #64748b; font-size: 13px;';
+        gridProdutos.appendChild(marca);
+
+        if ('IntersectionObserver' in window) {
+            marca.innerHTML = '<span class="ls-spinner ls-spinner-escuro"></span> A carregar mais produtos...';
+            observador = new IntersectionObserver((entradas) => {
+                if (!entradas.some(e => e.isIntersecting)) return;
+                pararObservador();                     // um pedido de cada vez
+                mostrarMais(geracao);
+            }, { rootMargin: '800px 0px' });           // começa a carregar antes de chegar ao fim
+            observador.observe(marca);
+        } else {
+            // navegadores muito antigos: um botão em vez do carregamento automático
+            const botao = document.createElement('button');
+            botao.type = 'button';
+            botao.style.cssText = 'padding: 12px 28px; background: #fff; color: ' + COR_AZUL_PADRAO + '; border: 2px solid ' + COR_AZUL_PADRAO + '; border-radius: 6px; font-weight: 600; cursor: pointer; font-size: 14px;';
+            botao.textContent = 'Ver mais produtos';
+            botao.addEventListener('click', () => {
+                botao.disabled = true;
+                botao.textContent = 'A carregar...';
+                mostrarMais(geracao);
+            });
+            marca.appendChild(botao);
+        }
+    }
+
+    // Um cartão de produto (o aspeto é o mesmo de sempre)
+    function criarCartao(p, capa) {
+        const cartao = document.createElement('div');
+        cartao.className = 'produto-card';
+        cartao.style.cssText = 'background: #fff; border-radius: 8px; overflow: hidden; box-shadow: 0 2px 10px rgba(0,0,0,0.06); display: flex; flex-direction: column; border: 1px solid #e2e8f0;';
+        
+        const descTexto = p.descricao || 'Sem descrição informada.';
+        const precisaVerMais = descTexto.length > 45;
+        const unidadesTexto = p.unidades > 0
+            ? 'Quantidade disponível: ' + p.unidades
+            : 'Esgotado';
+        const unidadesCor = p.unidades > 0 ? '#64748b' : '#c62828';
+
+        cartao.innerHTML = `
+            <div style="position: relative; width: 100%; height: 195px; background: #f8fafc; overflow: hidden;">
+                <img src="${capa}" alt="${p.nome}" data-galeria="${p.id}" style="width: 100%; height: 100%; object-fit: cover; cursor: pointer;">
+                <span style="position: absolute; top: 10px; right: 10px; background: rgba(15, 23, 42, 0.75); color: #fff; font-size: 10px; padding: 4px 8px; border-radius: 4px; text-transform: uppercase; font-weight: 600; letter-spacing: 0.5px;">${p.categoria}</span>
+            </div>
+            <div style="padding: 16px; display: flex; flex-direction: column; flex-grow: 1;">
+                <h3 style="font-size: 16px; font-weight: 600; color: #0f172a; margin: 0 0 6px 0; line-height: 1.3;">${p.nome}</h3>
+                <strong style="font-size: 18px; color: #000000; margin-bottom: 4px; display: block; font-weight: 700;">${formatarKz(p.preco)} Kz</strong>
+                <span style="font-size: 12px; color: ${unidadesCor}; margin-bottom: 10px; display: block; font-weight: 600;">${unidadesTexto}</span>
+                
+                <div style="margin-bottom: 12px; flex-grow: 1;">
+                    <p class="desc-curta" style="font-size: 13px; color: #475569; margin: 0; line-height: 1.4; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">${descTexto}</p>
+                    <p class="desc-completa" style="font-size: 13px; color: #475569; margin: 0; line-height: 1.4; display: none;">${descTexto}</p>
+                    ${precisaVerMais ? `<button type="button" class="btn-toggle-desc" style="background: none; border: none; color: ${COR_AZUL_PADRAO}; font-size: 12px; padding: 0; margin-top: 4px; cursor: pointer; font-weight: 600;">Ver mais</button>` : ''}
+                </div>
+
+                <div style="font-size: 12px; color: #64748b; margin-bottom: 14px; border-top: 1px solid #f1f5f9; padding-top: 8px;">
+                    <strong>Contacto:</strong> ${p.contacto || 'Não informado'}
+                </div>
+
+                <button type="button" class="btn-contacto-prod" style="width: 100%; padding: 11px; background: ${COR_AZUL_PADRAO}; color: #fff; border: none; border-radius: 6px; font-weight: 600; cursor: pointer; font-size: 14px; transition: opacity 0.2s;">Contactar Vendedor</button>
+            </div>
+        `;
+
+        if (precisaVerMais) {
+            const btnToggle = cartao.querySelector('.btn-toggle-desc');
+            const descCurta = cartao.querySelector('.desc-curta');
+            const descCompleta = cartao.querySelector('.desc-completa');
+
+            btnToggle.addEventListener('click', () => {
+                const expandido = descCompleta.style.display === 'block';
+                if (expandido) {
+                    descCompleta.style.display = 'none';
+                    descCurta.style.display = 'block';
+                    btnToggle.textContent = 'Ver mais';
+                } else {
+                    descCurta.style.display = 'none';
+                    descCompleta.style.display = 'block';
+                    btnToggle.textContent = 'Ver menos';
+                }
+            });
+        }
+
+        cartao.querySelector('.btn-contacto-prod').addEventListener('click', () => {
+            abrirOpcoesContacto(p);
+        });
+
+        return cartao;
     }
 
     window.recarregarVitrine = function() {
@@ -526,6 +658,9 @@ document.addEventListener('DOMContentLoaded', () => {
                 }
             }
 
+            // Miniatura da capa (pequena) para as listas do site
+            const miniatura = await criarMiniatura(fotosFinais[0]);
+
             const novoRegistoSupabase = {
                 user_id: userId,
                 dono_nome: userNome,
@@ -537,16 +672,25 @@ document.addEventListener('DOMContentLoaded', () => {
                 descricao: descricao,
                 imagem_url: fotosFinais[0],
                 imagens: fotosFinais,
+                miniatura: miniatura,
                 vendido: false
             };
 
             if (supabaseLoja) {
-                const { error } = await supabaseLoja
+                let resposta = await supabaseLoja
                     .from('produtos')
                     .insert([novoRegistoSupabase]);
 
-                if (error) {
-                    alert('Erro ao publicar no Supabase: ' + error.message);
+                // Se a coluna "miniatura" ainda não existe no Supabase, publica sem ela
+                if (resposta.error && /miniatura/i.test(resposta.error.message || '')) {
+                    delete novoRegistoSupabase.miniatura;
+                    resposta = await supabaseLoja
+                        .from('produtos')
+                        .insert([novoRegistoSupabase]);
+                }
+
+                if (resposta.error) {
+                    alert('Erro ao publicar no Supabase: ' + resposta.error.message);
                     return;
                 }
             }
